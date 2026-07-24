@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Second Brain — live VPS infrastructure</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Azeret+Mono:wght@300;400;500;600&display=swap" rel="stylesheet">
+<script type="importmap">
+{"imports":{"three":"https://esm.sh/three@0.183.2","three/":"https://esm.sh/three@0.183.2/"}}
+</script>
+<style>
+  :root{
+    --bg:#1E1A17; --bg-2:#14110f; --cream:#EDE4D3; --amber:#E8A225;
+    --muted:#8A7F6E; --line:rgba(237,228,211,.14);
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;color:var(--cream);
+    font-family:'Azeret Mono',ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-font-smoothing:antialiased}
+  #brain-graph{position:fixed;inset:0;z-index:0}
+
+  /* retro overlays */
+  .fx{position:fixed;inset:0;pointer-events:none;z-index:5}
+  .fx.vignette{background:radial-gradient(120% 120% at 50% 38%,transparent 46%,rgba(0,0,0,.55) 100%)}
+  .fx.scanlines{background:repeating-linear-gradient(to bottom,rgba(0,0,0,.16) 0,rgba(0,0,0,.16) 1px,transparent 1px,transparent 3px);mix-blend-mode:multiply;opacity:.45}
+  .fx.grain{opacity:.05;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='120' height='120'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>")}
+  .fx.flicker{background:var(--amber);opacity:0;mix-blend-mode:overlay;animation:flick 6s steps(60) infinite}
+  @keyframes flick{0%,97%,100%{opacity:0}98%{opacity:.015}99%{opacity:.03}}
+
+  .ui{position:fixed;z-index:10;pointer-events:none}
+  .topbar{top:26px;left:30px}
+  .eyebrow{font-size:10px;letter-spacing:.42em;color:var(--amber);text-transform:uppercase;opacity:.9;margin-bottom:10px}
+  .eyebrow .live{display:inline-block;width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 8px #22c55e;margin-right:8px;vertical-align:middle;animation:beat 1.6s ease-in-out infinite}
+  @keyframes beat{0%,100%{opacity:.4}50%{opacity:1}}
+  .title{font-size:clamp(24px,4vw,46px);font-weight:600;letter-spacing:.04em;line-height:.98;text-transform:uppercase;text-shadow:0 0 26px rgba(232,162,37,.28)}
+  .title .b{color:var(--amber)}
+  .subtitle{margin-top:12px;font-size:12px;color:var(--muted);letter-spacing:.16em}
+  .subtitle b{color:var(--cream);font-weight:500}
+
+  /* search */
+  .searchwrap{top:26px;left:50%;transform:translateX(-50%);pointer-events:auto}
+  .searchwrap input{width:min(46vw,420px);background:rgba(20,17,15,.82);border:1px solid var(--line);
+    color:var(--cream);font-family:inherit;font-size:12px;letter-spacing:.14em;padding:10px 14px;border-radius:8px;outline:none}
+  .searchwrap input:focus{border-color:var(--amber);box-shadow:0 0 18px rgba(232,162,37,.18)}
+  .searchres{margin-top:6px;max-height:40vh;overflow:auto;background:rgba(20,17,15,.94);border:1px solid var(--line);border-radius:8px;display:none}
+  .searchres.on{display:block}
+  .searchres .r{padding:7px 13px;font-size:11px;letter-spacing:.08em;cursor:pointer;border-bottom:1px solid rgba(237,228,211,.05);color:var(--muted)}
+  .searchres .r:hover{background:rgba(232,162,37,.1);color:var(--cream)}
+  .searchres .r .c{font-size:9px;opacity:.6;float:right;text-transform:uppercase;letter-spacing:.2em}
+
+  .readout{top:30px;right:30px;text-align:right;min-height:34px}
+  .readout .rk{font-size:9px;letter-spacing:.3em;color:var(--muted);text-transform:uppercase}
+  .readout .rv{font-size:15px;letter-spacing:.02em;color:var(--cream);margin-top:5px;min-height:20px}
+  .readout .rp{font-size:10px;letter-spacing:.22em;text-transform:uppercase;margin-top:3px;opacity:.9}
+
+  .legend{bottom:24px;right:26px;pointer-events:auto;text-align:right;max-width:44vw}
+  .legend .lg-title{font-size:9px;letter-spacing:.34em;color:var(--muted);text-transform:uppercase;margin-bottom:12px}
+  .legend .rows{display:flex;flex-direction:column;gap:2px;align-items:flex-end}
+  .lg{display:inline-flex;align-items:center;gap:9px;padding:4px 8px;border-radius:5px;cursor:pointer;font-size:11px;letter-spacing:.12em;color:var(--muted);border:1px solid transparent;transition:color .18s,background .18s,border-color .18s}
+  .lg .sw{width:9px;height:9px;border-radius:50%;box-shadow:0 0 8px currentColor;flex:0 0 auto}
+  .lg .ct{font-size:9px;opacity:.5}
+  .lg:hover{color:var(--cream);background:rgba(237,228,211,.05)}
+  .lg.active{color:#0e0c0a;font-weight:600}
+  .lg.dim{opacity:.32}
+
+  .hint{bottom:26px;left:30px;font-size:11px;letter-spacing:.18em;color:var(--muted);text-transform:uppercase;display:flex;gap:14px;align-items:center}
+  .hint .k{color:var(--cream)}
+  .hint .dot{width:3px;height:3px;border-radius:50%;background:var(--amber);opacity:.6}
+
+  /* detail panel */
+  .panel{position:fixed;z-index:12;top:0;left:0;height:100%;width:340px;background:rgba(16,13,11,.94);
+    border-right:1px solid var(--line);padding:26px 24px;transform:translateX(-110%);transition:transform .4s cubic-bezier(.4,0,.2,1);
+    pointer-events:auto;overflow:auto;backdrop-filter:blur(6px)}
+  .panel.on{transform:translateX(0)}
+  .panel .pk{font-size:9px;letter-spacing:.3em;text-transform:uppercase;color:var(--muted)}
+  .panel .pt{font-size:20px;font-weight:600;letter-spacing:.02em;margin:8px 0 4px;word-break:break-word}
+  .panel .badge{display:inline-block;font-size:9px;letter-spacing:.18em;text-transform:uppercase;padding:3px 8px;border-radius:4px;margin-right:6px;margin-top:6px}
+  .panel .row{margin-top:16px;font-size:11px;letter-spacing:.06em;color:var(--muted);line-height:1.7}
+  .panel .row b{color:var(--cream);font-weight:500}
+  .panel .row .lbl{font-size:9px;letter-spacing:.24em;text-transform:uppercase;color:var(--amber);opacity:.8;display:block;margin-bottom:3px}
+  .panel a{color:var(--amber);text-decoration:none;word-break:break-all}
+  .panel a:hover{text-decoration:underline}
+  .panel .close{position:absolute;top:18px;right:18px;cursor:pointer;color:var(--muted);font-size:16px}
+  .panel .close:hover{color:var(--cream)}
+
+  /* ticker */
+  .ticker{position:fixed;bottom:0;left:0;right:0;z-index:8;height:26px;overflow:hidden;
+    background:linear-gradient(to top,rgba(16,13,11,.9),transparent);pointer-events:none;
+    display:flex;align-items:center;padding:0 30px;font-size:10px;letter-spacing:.14em;color:var(--muted)}
+  .ticker .ev{white-space:nowrap;opacity:0;animation:tick 4s ease forwards}
+  @keyframes tick{0%{opacity:0;transform:translateY(6px)}12%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0}}
+  .ticker .ev .tag{color:var(--amber);margin-right:8px}
+
+  .loader{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;background:var(--bg);transition:opacity .8s ease;font-size:11px;letter-spacing:.3em;color:var(--muted);text-transform:uppercase}
+  .loader.gone{opacity:0;pointer-events:none}
+  .loader .pulse{animation:pulse 1.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+
+  body.embed .topbar,body.embed .hint,body.embed .loader,body.embed .subtitle{display:none!important}
+
+  @media (max-width:640px){
+    .topbar{left:18px;top:64px}.legend{max-width:60vw;right:16px;bottom:34px}
+    .readout{right:18px;top:20px}.searchwrap input{width:70vw}.panel{width:86vw}
+  }
+</style>
+</head>
+<body>
+<div id="brain-graph"></div>
+
+<div class="fx grain"></div>
+<div class="fx scanlines"></div>
+<div class="fx vignette"></div>
+<div class="fx flicker"></div>
+
+<div class="ui topbar">
+  <div class="eyebrow"><span class="live"></span>Live VPS infrastructure · srv1397016</div>
+  <div class="title">Second<br><span class="b">Brain</span></div>
+  <div class="subtitle" id="subtitle">connecting…</div>
+</div>
+
+<div class="ui searchwrap">
+  <input id="search" placeholder="search agents · repos · clients · files…" autocomplete="off">
+  <div class="searchres" id="searchres"></div>
+</div>
+
+<div class="ui readout">
+  <div class="rk">Now inspecting</div>
+  <div class="rv" id="rv">the whole operation</div>
+  <div class="rp" id="rp" style="color:var(--amber)">all pillars</div>
+</div>
+
+<div class="ui legend">
+  <div class="lg-title">Pillars — click to isolate</div>
+  <div class="rows" id="legend-rows"></div>
+</div>
+
+<div class="ui hint">
+  <span><span class="k">drag</span> orbit</span><span class="dot"></span>
+  <span><span class="k">scroll</span> zoom</span><span class="dot"></span>
+  <span><span class="k">click</span> a node</span>
+</div>
+
+<div class="panel" id="panel"></div>
+<div class="ticker" id="ticker"></div>
+<div class="loader" id="loader"><span class="pulse">Waking the second brain…</span></div>
+
+<script type="module">
+import * as THREE from 'three'
+import ForceGraph3D from 'https://esm.sh/3d-force-graph@1.73.4?external=three'
+
+const EMBED = new URLSearchParams(location.search).get('embed') === '1'
+if (EMBED) document.body.classList.add('embed')
+
+const CLUSTERS = {
+  agents:{label:'AGENTS',color:'#E8A225'}, services:{label:'SERVICES',color:'#ec4899'},
+  repos:{label:'REPOS',color:'#06b6d4'}, clients:{label:'CLIENTS',color:'#22c55e'},
+  prompts:{label:'PROMPTS',color:'#8b5cf6'}, queue:{label:'MESSAGES',color:'#eab308'},
+  state:{label:'STATE',color:'#8A7F6E'},
+}
+const CL = Object.keys(CLUSTERS)
+const colorOf = c => (CLUSTERS[c]?.color) || '#fff'
+
+// shared additive sprite material per cluster (cheap cluster-dim)
+const mat = {}
+function makeMaterial(color){
+  const cv=document.createElement('canvas');cv.width=64;cv.height=64
+  const ctx=cv.getContext('2d')
+  const g=ctx.createRadialGradient(32,32,0,32,32,32)
+  g.addColorStop(0,'#ffffff');g.addColorStop(.25,color);g.addColorStop(.65,color+'44');g.addColorStop(1,'transparent')
+  ctx.fillStyle=g;ctx.fillRect(0,0,64,64)
+  return new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),transparent:true,opacity:.9,depthWrite:false,blending:THREE.AdditiveBlending})
+}
+CL.forEach(c=>mat[c]=makeMaterial(colorOf(c)))
+
+const statusScale = s => s==='live'?1.35 : s==='hub'?1.0 : s==='idle'?0.95 : 0.55
+function baseScale(n){ return (3 + Math.sqrt(n.val||6)*1.4) * statusScale(n.status) }
+
+const el=document.getElementById('brain-graph')
+const rv=document.getElementById('rv'), rp=document.getElementById('rp')
+const panel=document.getElementById('panel')
+let Graph=null, selected=null, DATA={nodes:[],links:[]}, byId=new Map()
+const flashing=new Map() // id -> intensity
+const commLinks=new Map() // "s|t" -> link obj
+
+function nodeSprite(node){
+  const sp=new THREE.Sprite(mat[node.cluster]||mat.state)
+  const s=baseScale(node); sp.scale.set(s,s,1)
+  node.__obj=sp; node.__s=s
+  return sp
+}
+
+// ---------- legend ----------
+function renderLegend(){
+  const rows=document.getElementById('legend-rows'); rows.innerHTML=''
+  CL.forEach(c=>{
+    const ct=DATA.nodes.filter(n=>n.cluster===c && n.kind!=='hub').length
+    const e=document.createElement('div'); e.className='lg'; e.dataset.cluster=c
+    e.innerHTML=`<span>${CLUSTERS[c].label}</span><span class="ct">${ct}</span><span class="sw" style="color:${colorOf(c)};background:${colorOf(c)}"></span>`
+    e.addEventListener('click',()=>setSelected(c)); rows.appendChild(e)
+  })
+}
+const clusterOf = end => (typeof end==='object'&&end) ? end.cluster : (byId.get(end)?.cluster)
+
+function refreshLinks(){
+  Graph.linkColor(l=>{
+    if(l.__pulse) return 'rgba(232,162,37,.6)'
+    if(!selected) return l.cross ? 'rgba(232,162,37,.16)' : 'rgba(237,228,211,.10)'
+    const on=clusterOf(l.source)===selected||clusterOf(l.target)===selected
+    return on ? 'rgba(232,162,37,.5)' : 'rgba(237,228,211,.02)'
+  })
+}
+function setSelected(c){
+  selected=(selected===c)?null:c
+  CL.forEach(k=>mat[k].opacity=!selected?.9:(k===selected?.98:.05))
+  document.querySelectorAll('.lg').forEach(e=>{
+    const k=e.dataset.cluster
+    e.classList.toggle('active',selected===k); e.classList.toggle('dim',!!selected&&selected!==k)
+    e.style.background=selected===k?colorOf(k):''; e.style.borderColor=selected===k?colorOf(k):''
+  })
+  if(selected){ rv.textContent=CLUSTERS[selected].label; rp.textContent=`${DATA.nodes.filter(n=>n.cluster===selected&&n.kind!=='hub').length} nodes`; rp.style.color=colorOf(selected) }
+  else { rv.textContent='the whole operation'; rp.textContent='all pillars'; rp.style.color='var(--amber)' }
+  refreshLinks()
+  post('brain:isolate',{cluster:selected})
+}
+
+// ---------- detail panel ----------
+function statusColor(s){return s==='live'?'#22c55e':s==='idle'?'#E8A225':s==='down'||s==='ember'?'#ef4444':'#8A7F6E'}
+function showPanel(n){
+  if(!n||n.kind==='hub'){panel.classList.remove('on');return}
+  const m=n.meta||{}
+  let rows=''
+  const R=(lbl,val)=>val?`<div class="row"><span class="lbl">${lbl}</span>${val}</div>`:''
+  rows+=R('Kind',n.kind)
+  rows+=R('Status',`<b style="color:${statusColor(n.status)}">${n.status}</b>`)
+  if(m.tier)rows+=R('Tier',m.tier)
+  if(m.role)rows+=R('Role',m.role)
+  if(m.tmux)rows+=R('tmux',`<b>${m.tmux}</b>`)
+  if(m.cwd)rows+=R('cwd',m.cwd)
+  if(m.path)rows+=R('Path',m.path)
+  if(m.system_prompt)rows+=R('Prompt',m.system_prompt)
+  if(m.lastCommitDaysAgo!=null)rows+=R('Last commit',m.lastCommitDaysAgo+'d ago')
+  if(m.urlCount!=null)rows+=R('Deployed URLs',m.urlCount)
+  if(m.deployed_urls&&m.deployed_urls.length){
+    rows+=`<div class="row"><span class="lbl">Assets</span>`+m.deployed_urls.slice(0,8).map(u=>`<div><a href="${u.url}" target="_blank">${u.label||u.url}</a></div>`).join('')+`</div>`
+  }
+  const links=DATA.links.filter(l=>(l.source.id||l.source)===n.id||(l.target.id||l.target)===n.id)
+  if(links.length)rows+=R('Connections',links.length)
+  panel.innerHTML=`<div class="close" id="pclose">×</div>
+    <div class="pk">${CLUSTERS[n.cluster]?.label||n.cluster}</div>
+    <div class="pt" style="color:${colorOf(n.cluster)}">${n.name}</div>
+    <span class="badge" style="background:${colorOf(n.cluster)}22;color:${colorOf(n.cluster)}">${n.cluster}</span>
+    <span class="badge" style="background:${statusColor(n.status)}22;color:${statusColor(n.status)}">${n.status}</span>
+    ${rows}`
+  panel.classList.add('on')
+  document.getElementById('pclose').onclick=()=>panel.classList.remove('on')
+}
+
+// ---------- search ----------
+const searchEl=document.getElementById('search'), searchRes=document.getElementById('searchres')
+function doSearch(q){
+  q=q.trim().toLowerCase()
+  if(!q){searchRes.classList.remove('on');return}
+  const hits=DATA.nodes.filter(n=>n.kind!=='hub'&&(n.name.toLowerCase().includes(q)||n.id.toLowerCase().includes(q))).slice(0,12)
+  searchRes.innerHTML=hits.map(n=>`<div class="r" data-id="${n.id}">${n.name}<span class="c" style="color:${colorOf(n.cluster)}">${n.cluster}</span></div>`).join('')||'<div class="r">no match</div>'
+  searchRes.classList.add('on')
+  searchRes.querySelectorAll('.r[data-id]').forEach(r=>r.onclick=()=>{flyTo(byId.get(r.dataset.id));searchRes.classList.remove('on')})
+}
+searchEl.addEventListener('input',e=>doSearch(e.target.value))
+searchEl.addEventListener('keydown',e=>{if(e.key==='Enter'){const f=DATA.nodes.find(n=>n.kind!=='hub'&&n.name.toLowerCase().includes(searchEl.value.toLowerCase()));if(f)flyTo(f)}})
+
+function flyTo(n){
+  if(!n)return
+  const d=120,r=Math.hypot(n.x||1,n.y||0,n.z||0)||1,k=1+d/r
+  Graph.cameraPosition({x:(n.x||0)*k,y:(n.y||0)*k,z:(n.z||0)*k},n,1100)
+  showPanel(n); flashNode(n.id,1.6)
+  rv.textContent=n.name; rp.textContent=n.cluster; rp.style.color=colorOf(n.cluster)
+}
+
+// ---------- flash / pulse animation ----------
+function flashNode(id,amt=1.2){flashing.set(id,Math.max(flashing.get(id)||0,amt))}
+function animFlashes(){
+  for(const[id,v]of flashing){
+    const n=byId.get(id); if(n&&n.__obj){const s=n.__s*(1+v);n.__obj.scale.set(s,s,1)}
+    const nv=v-0.045; if(nv<=0){flashing.delete(id);if(n&&n.__obj)n.__obj.scale.set(n.__s,n.__s,1)}else flashing.set(id,nv)
+  }
+  requestAnimationFrame(animFlashes)
+}
+
+function ensureCommLink(s,t){
+  const key=s+'|'+t
+  if(commLinks.has(key))return commLinks.get(key)
+  if(!byId.has(s)||!byId.has(t))return null
+  const l={source:s,target:t,__comm:true,cross:true}
+  DATA.links.push(l); commLinks.set(key,l)
+  Graph.graphData(DATA)
+  return l
+}
+function pulseLink(s,t){
+  const l=ensureCommLink(s,t)
+  if(l){try{Graph.emitParticle(l)}catch{}}
+}
+
+// ---------- ticker ----------
+const tickerEl=document.getElementById('ticker')
+function ticker(text){
+  const e=document.createElement('div');e.className='ev';e.innerHTML=`<span class="tag">▸</span>${text}`
+  tickerEl.innerHTML='';tickerEl.appendChild(e)
+  setTimeout(()=>{if(e.parentNode)e.remove()},4000)
+}
+
+// ---------- init graph ----------
+function init(data){
+  DATA=data; byId=new Map(DATA.nodes.map(n=>[n.id,n]))
+  Graph=ForceGraph3D()(el)
+    .graphData(DATA)
+    .width(el.clientWidth).height(el.clientHeight)
+    .backgroundColor('#1E1A17').showNavInfo(false)
+    .nodeThreeObject(nodeSprite).nodeThreeObjectExtend(false)
+    .nodeVal('val')
+    .nodeLabel(n=>`<div style="color:${colorOf(n.cluster)};font-family:'Azeret Mono',monospace;font-size:12px;background:rgba(10,8,6,.92);padding:7px 11px;border-radius:6px;line-height:1.5;border:1px solid rgba(237,228,211,.14)"><div>${n.name}</div><div style="opacity:.5;font-size:9px;letter-spacing:.14em;margin-top:3px">${n.cluster} · ${n.status}</div></div>`)
+    .linkColor(l=>l.cross?'rgba(232,162,37,.16)':'rgba(237,228,211,.10)').linkWidth(0.6).linkOpacity(.5)
+    .linkDirectionalParticles(l=>l.__comm?0:(l.cross?0:1)).linkDirectionalParticleWidth(1.4).linkDirectionalParticleSpeed(.006)
+    .linkDirectionalParticleColor(()=> 'rgba(232,162,37,.7)')
+    .enableNodeDrag(false)
+    .warmupTicks(90).cooldownTicks(200).d3AlphaDecay(0.018).d3VelocityDecay(0.32)
+    .onNodeHover(n=>{
+      el.style.cursor=n?'pointer':'grab'
+      if(n){rv.textContent=n.name;rp.textContent=n.cluster;rp.style.color=colorOf(n.cluster);post('brain:hover',{id:n.id,name:n.name,cluster:n.cluster})}
+      else if(!selected){rv.textContent='the whole operation';rp.textContent='all pillars';rp.style.color='var(--amber)'}
+    })
+    .onNodeClick(n=>{flyTo(n);if(selected!==n.cluster&&n.kind!=='hub'){} post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta})})
+    .onBackgroundClick(()=>{if(selected)setSelected(selected);panel.classList.remove('on');Graph.zoomToFit(900,80)})
+
+  const c=Graph.controls();c.maxDistance=1400;c.minDistance=40;c.autoRotate=!EMBED;c.autoRotateSpeed=0.35
+  const scene=Graph.scene()
+  const key=new THREE.PointLight(0xffeedd,1.5,1200);key.position.set(200,150,100);scene.add(key)
+  scene.add(new THREE.AmbientLight(0x403a30,0.7))
+
+  renderLegend()
+  document.getElementById('subtitle').innerHTML=`<b>${data.stats.agents}</b> agents · <b>${data.stats.repos}</b> repos · <b>${data.stats.clients}</b> clients · <b>${data.stats.live}</b> live`
+  setTimeout(()=>{try{Graph.zoomToFit(0,80)}catch{}},700)
+  setTimeout(()=>document.getElementById('loader').classList.add('gone'),1000)
+  addEventListener('resize',()=>Graph.width(el.clientWidth).height(el.clientHeight))
+  animFlashes()
+}
+
+// ---------- websocket deltas ----------
+function connectWS(){
+  const proto=location.protocol==='https:'?'wss':'ws'
+  const ws=new WebSocket(`${proto}://${location.host}`)
+  ws.onmessage=ev=>{
+    const m=JSON.parse(ev.data)
+    if(m.type==='init'){ if(!Graph)init(m.graph); return }
+    if(m.type==='node.flash'){ flashNode(m.id, m.kind==='commit'?1.8:m.kind==='spawn'?2.0:1.2); return }
+    if(m.type==='node.update'){ const n=byId.get(m.id); if(n){Object.assign(n,m.patch); if(n.__obj){n.__s=baseScale(n);n.__obj.scale.set(n.__s,n.__s,1)}} return }
+    if(m.type==='link.pulse'){ pulseLink(m.source,m.target); return }
+    if(m.type==='node.add'){ if(!byId.has(m.node.id)){DATA.nodes.push(m.node);byId.set(m.node.id,m.node);Graph.graphData(DATA);renderLegend();flashNode(m.node.id,2)} return }
+    if(m.type==='node.remove'){ if(byId.has(m.id)){DATA.nodes=DATA.nodes.filter(n=>n.id!==m.id);DATA.links=DATA.links.filter(l=>(l.source.id||l.source)!==m.id&&(l.target.id||l.target)!==m.id);byId.delete(m.id);Graph.graphData(DATA);renderLegend()} return }
+    if(m.type==='ticker'){ ticker(m.text); return }
+  }
+  ws.onclose=()=>setTimeout(connectWS,2500)
+  ws.onerror=()=>ws.close()
+}
+
+// ---------- embed postMessage API ----------
+function post(type,payload){ if(EMBED&&window.parent!==window) window.parent.postMessage({type,payload},'*') }
+window.addEventListener('message',ev=>{
+  const {type,payload}=ev.data||{}
+  if(type==='brain:focus'&&payload?.id)flyTo(byId.get(payload.id))
+  else if(type==='brain:search'&&payload?.q){searchEl.value=payload.q;doSearch(payload.q)}
+  else if(type==='brain:isolate')setSelected(payload?.cluster||null)
+  else if(type==='brain:reset'){if(selected)setSelected(selected);Graph?.zoomToFit(900,80)}
+})
+
+// boot: fetch snapshot then live WS
+fetch('/api/graph').then(r=>r.json()).then(d=>{init(d);connectWS()}).catch(()=>connectWS())
+</script>
+</body>
+</html>

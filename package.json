@@ -1,0 +1,17 @@
+{
+  "name": "second-brain",
+  "version": "1.0.0",
+  "description": "Live real-time 3D second brain of the VPS infrastructure (ForceGraph3D + WS)",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "chokidar": "^5.0.0",
+    "ws": "^8.21.1"
+  }
+}
