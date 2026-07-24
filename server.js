@@ -32,7 +32,9 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (url === '/healthz') { res.writeHead(200); res.end('ok'); return; }
-  let file = url === '/' ? '/index.html' : url;
+  // /field is the one canonical page; / redirects to it. everything else -> static file.
+  if (url === '/') { res.writeHead(302, { location: '/field' }); res.end(); return; }
+  let file = (url === '/field') ? '/index.html' : url;
   const fp = path.join(PUBLIC, path.normalize(file).replace(/^(\.\.[/\\])+/, ''));
   fs.readFile(fp, (err, data) => {
     if (err) { res.writeHead(404); res.end('not found'); return; }

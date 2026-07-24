@@ -353,6 +353,24 @@ function ticker(text){
   setTimeout(()=>{if(e.parentNode)e.remove()},4000)
 }
 
+// ---------- settle: guarantee sprites sit on node coords + frame the whole constellation ----------
+function syncSprites(){ for(const n of DATA.nodes) if(n.__obj) n.__obj.position.set(n.x||0,n.y||0,n.z||0) }
+function frameCamera(){
+  const N=DATA.nodes; if(!N.length)return
+  let cx=0,cy=0,cz=0; for(const n of N){cx+=n.x||0;cy+=n.y||0;cz+=n.z||0}
+  cx/=N.length;cy/=N.length;cz/=N.length
+  let R=1; for(const n of N){const d=Math.hypot((n.x||0)-cx,(n.y||0)-cy,(n.z||0)-cz); if(d>R)R=d}
+  const fov=(Graph.camera().fov||50)*Math.PI/180
+  const dist=(R/Math.sin(fov/2))*1.15
+  Graph.cameraPosition({x:cx,y:cy,z:cz+dist},{x:cx,y:cy,z:cz},900)
+}
+function settleView(){
+  syncSprites()
+  if(window.__settled)return
+  window.__settled=1; frameCamera()
+  document.getElementById('loader').classList.add('gone')
+}
+
 // ---------- init graph ----------
 function init(data){
   DATA=data; byId=new Map(DATA.nodes.map(n=>[n.id,n])); indexCommLinks()
@@ -368,9 +386,8 @@ function init(data){
     .linkDirectionalParticles(0).linkDirectionalParticleWidth(2.2).linkDirectionalParticleSpeed(.01)
     .linkDirectionalParticleColor(l=> l.__pcolor || 'rgba(232,162,37,.8)')
     .enableNodeDrag(false)
-    .warmupTicks(80).cooldownTicks(450).d3AlphaDecay(0.0182).d3VelocityDecay(0.28)
-    .onEngineStop(()=>{ if(window.__settled)return; window.__settled=1;
-      try{Graph.zoomToFit(800,45)}catch{}; document.getElementById('loader').classList.add('gone') })
+    .warmupTicks(0).cooldownTicks(300).d3AlphaDecay(0.0182).d3VelocityDecay(0.28)
+    .onEngineStop(()=>settleView())
     .onNodeHover(n=>{
       el.style.cursor=n?'pointer':'grab'
       if(n){rv.textContent=n.name;rp.textContent=n.cluster;rp.style.color=colorOf(n.cluster);post('brain:hover',{id:n.id,name:n.name,cluster:n.cluster})}
@@ -396,7 +413,7 @@ function init(data){
   const st=data.stats
   document.getElementById('subtitle').innerHTML=`<b>${st.agents}</b> agents · <b>${st.repos}</b> repos · <b>${st.clients}</b> clients · <b>${st.live}</b> live · <b>${st.commEdges||0}</b> comm-edges · <b>${st.msgs24h||0}</b> msgs/24h`
   // loader stays up while the sim settles (hidden by onEngineStop); fallback in case it never stops
-  setTimeout(()=>{ if(window.__settled)return; window.__settled=1; try{Graph.zoomToFit(800,45)}catch{}; document.getElementById('loader').classList.add('gone') },9000)
+  setTimeout(()=>settleView(),7000)
   addEventListener('resize',()=>Graph.width(el.clientWidth).height(el.clientHeight))
   animFlashes()
 }
