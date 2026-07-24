@@ -332,7 +332,9 @@ function init(data){
     .linkDirectionalParticles(0).linkDirectionalParticleWidth(2.2).linkDirectionalParticleSpeed(.01)
     .linkDirectionalParticleColor(l=> l.__pcolor || 'rgba(232,162,37,.8)')
     .enableNodeDrag(false)
-    .warmupTicks(220).cooldownTicks(0).d3AlphaDecay(0.04).d3VelocityDecay(0.45)
+    .warmupTicks(80).cooldownTicks(450).d3AlphaDecay(0.0182).d3VelocityDecay(0.28)
+    .onEngineStop(()=>{ if(window.__settled)return; window.__settled=1;
+      try{Graph.zoomToFit(800,45)}catch{}; document.getElementById('loader').classList.add('gone') })
     .onNodeHover(n=>{
       el.style.cursor=n?'pointer':'grab'
       if(n){rv.textContent=n.name;rp.textContent=n.cluster;rp.style.color=colorOf(n.cluster);post('brain:hover',{id:n.id,name:n.name,cluster:n.cluster})}
@@ -341,7 +343,14 @@ function init(data){
     .onNodeClick(n=>{flyTo(n);if(selected!==n.cluster&&n.kind!=='hub'){} post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta})})
     .onBackgroundClick(()=>{if(selected)setSelected(selected);panel.classList.remove('on');Graph.zoomToFit(900,80)})
 
-  const c=Graph.controls();c.maxDistance=1400;c.minDistance=40;c.autoRotate=!EMBED;c.autoRotateSpeed=0.35
+  // force tuning: strong repulsion + short member springs spread the pillars apart;
+  // weak comm springs so cross-cluster edges don't yank everything into a ball.
+  Graph.d3Force('charge').strength(-140).distanceMax(700)
+  Graph.d3Force('link')
+    .distance(l=> l.kind==='member' ? 34 : l.kind==='comm' ? 95 : 55)
+    .strength(l=> l.kind==='member' ? 0.75 : l.kind==='comm' ? 0.04 : 0.2)
+
+  const c=Graph.controls();c.maxDistance=2000;c.minDistance=40;c.autoRotate=!EMBED;c.autoRotateSpeed=0.35
   const scene=Graph.scene()
   const key=new THREE.PointLight(0xffeedd,1.5,1200);key.position.set(200,150,100);scene.add(key)
   scene.add(new THREE.AmbientLight(0x403a30,0.7))
@@ -350,8 +359,8 @@ function init(data){
   renderLegend()
   const st=data.stats
   document.getElementById('subtitle').innerHTML=`<b>${st.agents}</b> agents · <b>${st.repos}</b> repos · <b>${st.clients}</b> clients · <b>${st.live}</b> live · <b>${st.commEdges||0}</b> comm-edges · <b>${st.msgs24h||0}</b> msgs/24h`
-  setTimeout(()=>{try{Graph.zoomToFit(0,80)}catch{}},700)
-  setTimeout(()=>document.getElementById('loader').classList.add('gone'),1000)
+  // loader stays up while the sim settles (hidden by onEngineStop); fallback in case it never stops
+  setTimeout(()=>{ if(window.__settled)return; window.__settled=1; try{Graph.zoomToFit(800,45)}catch{}; document.getElementById('loader').classList.add('gone') },9000)
   addEventListener('resize',()=>Graph.width(el.clientWidth).height(el.clientHeight))
   animFlashes()
 }
