@@ -33,7 +33,10 @@ const server = http.createServer((req, res) => {
   const fp = path.join(PUBLIC, path.normalize(file).replace(/^(\.\.[/\\])+/, ''));
   fs.readFile(fp, (err, data) => {
     if (err) { res.writeHead(404); res.end('not found'); return; }
-    res.writeHead(200, { 'content-type': MIME[path.extname(fp)] || 'application/octet-stream' });
+    res.writeHead(200, {
+      'content-type': MIME[path.extname(fp)] || 'application/octet-stream',
+      'cache-control': 'no-store, must-revalidate',
+    });
     res.end(data);
   });
 });
