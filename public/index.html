@@ -165,17 +165,19 @@ const MSG_COLORS = {escalate:'#ef4444',reply:'#06b6d4',route:'#E8A225',request:'
   broadcast:'#8b5cf6',status:'#8A7F6E',task:'#eab308',asset_registered:'#22c55e'}
 const pulseColor = t => MSG_COLORS[t] || '#E8A225'
 
-// shared additive sprite material per cluster (cheap cluster-dim)
-const mat = {}
-function makeMaterial(color){
+// one shared glow TEXTURE per cluster; each node gets its OWN material (sharing the
+// texture) so we can dim individual nodes, not just whole clusters.
+const clusterTex = {}
+function makeTexture(color){
   const cv=document.createElement('canvas');cv.width=64;cv.height=64
   const ctx=cv.getContext('2d')
   const g=ctx.createRadialGradient(32,32,0,32,32,32)
   g.addColorStop(0,'#ffffff');g.addColorStop(.25,color);g.addColorStop(.65,color+'44');g.addColorStop(1,'transparent')
   ctx.fillStyle=g;ctx.fillRect(0,0,64,64)
-  return new THREE.SpriteMaterial({map:new THREE.CanvasTexture(cv),transparent:true,opacity:.9,depthWrite:false,blending:THREE.AdditiveBlending})
+  return new THREE.CanvasTexture(cv)
 }
-CL.forEach(c=>mat[c]=makeMaterial(colorOf(c)))
+CL.forEach(c=>clusterTex[c]=makeTexture(colorOf(c)))
+const DIM=0.05, FULL=0.9   // node opacity when dimmed / normal
 
 const statusScale = s => s==='live'?1.35 : s==='hub'?1.0 : s==='idle'?0.95 : 0.55
 function baseScale(n){ return (3 + Math.sqrt(n.val||6)*1.4) * statusScale(n.status) }
@@ -183,16 +185,25 @@ function baseScale(n){ return (3 + Math.sqrt(n.val||6)*1.4) * statusScale(n.stat
 const el=document.getElementById('brain-graph')
 const rv=document.getElementById('rv'), rp=document.getElementById('rp')
 const panel=document.getElementById('panel')
-let Graph=null, selected=null, DATA={nodes:[],links:[]}, byId=new Map()
+let Graph=null, selected=null, focusId=null, neighborSet=null, DATA={nodes:[],links:[]}, byId=new Map()
 const flashing=new Map() // id -> intensity
 const commLinks=new Map() // "s|t" -> link obj
 
 function nodeSprite(node){
-  const sp=new THREE.Sprite(mat[node.cluster]||mat.state)
+  const m=new THREE.SpriteMaterial({map:clusterTex[node.cluster]||clusterTex.state,
+    transparent:true,opacity:opacityFor(node),depthWrite:false,blending:THREE.AdditiveBlending})
+  const sp=new THREE.Sprite(m)
   const s=baseScale(node); sp.scale.set(s,s,1)
-  node.__obj=sp; node.__s=s
+  node.__obj=sp; node.__s=s; node.__mat=m
   return sp
 }
+// opacity a node should have under the current focus/cluster selection
+function opacityFor(node){
+  if(focusId&&neighborSet) return neighborSet.has(node.id) ? (node.id===focusId?1:.95) : DIM
+  if(selected) return node.cluster===selected ? .96 : DIM
+  return FULL
+}
+function applyNodeDim(){ for(const n of DATA.nodes) if(n.__mat) n.__mat.opacity=opacityFor(n) }
 
 // ---------- legend ----------
 function renderLegend(){
@@ -208,15 +219,41 @@ const clusterOf = end => (typeof end==='object'&&end) ? end.cluster : (byId.get(
 
 function refreshLinks(){
   Graph.linkColor(l=>{
+    const a=l.source.id||l.source, b=l.target.id||l.target
     const base=l.kind==='comm'?'rgba(232,162,37,.22)':(l.cross?'rgba(232,162,37,.12)':'rgba(237,228,211,.06)')
+    if(focusId) return (a===focusId||b===focusId) ? 'rgba(232,162,37,.7)' : 'rgba(237,228,211,.02)'
     if(!selected) return base
     const on=clusterOf(l.source)===selected||clusterOf(l.target)===selected
     return on ? 'rgba(232,162,37,.5)' : 'rgba(237,228,211,.02)'
   })
 }
+function clearLegendActive(){
+  document.querySelectorAll('.lg').forEach(e=>{e.classList.remove('active','dim');e.style.background='';e.style.borderColor=''})
+}
+// ---------- focus a node: dim everything except it + its direct connections ----------
+function neighborsOf(id){
+  const s=new Set([id])
+  for(const l of DATA.links){ const a=l.source.id||l.source, b=l.target.id||l.target
+    if(a===id)s.add(b); else if(b===id)s.add(a) }
+  return s
+}
+function focusOn(node){
+  if(!node||node.kind==='hub'){ clearFocus(); return }
+  selected=null; clearLegendActive()
+  focusId=node.id; neighborSet=neighborsOf(node.id)
+  applyNodeDim(); refreshLinks()
+  rv.textContent=node.name; rp.textContent=`${neighborSet.size-1} connection${neighborSet.size===2?'':'s'}`; rp.style.color=colorOf(node.cluster)
+}
+function clearFocus(){
+  if(!focusId&&!selected) { applyNodeDim(); refreshLinks(); return }
+  focusId=null; neighborSet=null; selected=null; clearLegendActive()
+  applyNodeDim(); refreshLinks()
+  rv.textContent='the whole operation'; rp.textContent='all pillars'; rp.style.color='var(--amber)'
+}
 function setSelected(c){
+  focusId=null; neighborSet=null
   selected=(selected===c)?null:c
-  CL.forEach(k=>mat[k].opacity=!selected?.9:(k===selected?.98:.05))
+  applyNodeDim()
   document.querySelectorAll('.lg').forEach(e=>{
     const k=e.dataset.cluster
     e.classList.toggle('active',selected===k); e.classList.toggle('dim',!!selected&&selected!==k)
@@ -277,8 +314,7 @@ function flyTo(n){
   if(!n)return
   const d=120,r=Math.hypot(n.x||1,n.y||0,n.z||0)||1,k=1+d/r
   Graph.cameraPosition({x:(n.x||0)*k,y:(n.y||0)*k,z:(n.z||0)*k},n,1100)
-  showPanel(n); flashNode(n.id,1.6)
-  rv.textContent=n.name; rp.textContent=n.cluster; rp.style.color=colorOf(n.cluster)
+  showPanel(n); flashNode(n.id,1.6); focusOn(n)
 }
 
 // ---------- flash / pulse animation ----------
@@ -338,10 +374,10 @@ function init(data){
     .onNodeHover(n=>{
       el.style.cursor=n?'pointer':'grab'
       if(n){rv.textContent=n.name;rp.textContent=n.cluster;rp.style.color=colorOf(n.cluster);post('brain:hover',{id:n.id,name:n.name,cluster:n.cluster})}
-      else if(!selected){rv.textContent='the whole operation';rp.textContent='all pillars';rp.style.color='var(--amber)'}
+      else if(!selected&&!focusId){rv.textContent='the whole operation';rp.textContent='all pillars';rp.style.color='var(--amber)'}
     })
-    .onNodeClick(n=>{flyTo(n);if(selected!==n.cluster&&n.kind!=='hub'){} post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta})})
-    .onBackgroundClick(()=>{if(selected)setSelected(selected);panel.classList.remove('on');Graph.zoomToFit(900,80)})
+    .onNodeClick(n=>{ flyTo(n); post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta}) })
+    .onBackgroundClick(()=>{ clearFocus(); panel.classList.remove('on'); Graph.zoomToFit(900,80) })
 
   // force tuning: strong repulsion + short member springs spread the pillars apart;
   // weak comm springs so cross-cluster edges don't yank everything into a ball.
@@ -355,7 +391,7 @@ function init(data){
   const key=new THREE.PointLight(0xffeedd,1.5,1200);key.position.set(200,150,100);scene.add(key)
   scene.add(new THREE.AmbientLight(0x403a30,0.7))
 
-  window.__brain={Graph,DATA} // debug handle
+  window.__brain={Graph,DATA,focusOn,clearFocus,get focusId(){return focusId}} // debug handle
   renderLegend()
   const st=data.stats
   document.getElementById('subtitle').innerHTML=`<b>${st.agents}</b> agents · <b>${st.repos}</b> repos · <b>${st.clients}</b> clients · <b>${st.live}</b> live · <b>${st.commEdges||0}</b> comm-edges · <b>${st.msgs24h||0}</b> msgs/24h`
@@ -391,7 +427,7 @@ window.addEventListener('message',ev=>{
   if(type==='brain:focus'&&payload?.id)flyTo(byId.get(payload.id))
   else if(type==='brain:search'&&payload?.q){searchEl.value=payload.q;doSearch(payload.q)}
   else if(type==='brain:isolate')setSelected(payload?.cluster||null)
-  else if(type==='brain:reset'){if(selected)setSelected(selected);Graph?.zoomToFit(900,80)}
+  else if(type==='brain:reset'){clearFocus();Graph?.zoomToFit(900,80)}
 })
 
 // boot: fetch snapshot then live WS
