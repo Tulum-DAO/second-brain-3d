@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import chokidar from 'chokidar';
-import { buildGraph, liveSessions, resolveAgentId, AO, REPOS } from './lib/collect.js';
+import { buildGraph, liveSessions, resolveActorId, normActor, db, AO, REPOS } from './lib/collect.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 7373;
@@ -83,22 +83,52 @@ setInterval(() => {
   prevLive = cur;
 }, 2000);
 
-// 2) inter-agent messages -> link pulses (queue/bridged/<recipient>/*.json)
-const bridgedDir = path.join(AO, 'queue/bridged');
-chokidar.watch(bridgedDir, { ignoreInitial: true, depth: 2,
-  awaitWriteFinish: { stabilityThreshold: 200, pollInterval: 50 } })
-  .on('add', (fp) => {
-    if (!fp.endsWith('.json')) return;
-    let msg; try { msg = JSON.parse(fs.readFileSync(fp, 'utf8')); } catch { return; }
-    const from = resolveAgentId(msg.from, graph);
-    const to = resolveAgentId(msg.to, graph);
+// 2) inter-agent messages -> live pulses, polled from the canonical DB (state/tasks.db).
+//    This is the REAL message bus; the old queue/bridged dir is legacy/stale.
+let lastMsgSeen = null; // ISO created_at high-water mark
+function initMsgCursor() {
+  const d = db(); if (!d) return;
+  try { lastMsgSeen = d.prepare(`SELECT max(created_at) m FROM messages`).get().m || null; } catch {}
+}
+initMsgCursor();
+function ensureActorNode(name) {
+  const id = resolveActorId(name, graph);
+  if (id) return id;
+  const norm = normActor(name);
+  if (!norm || norm === 'unknown') return null;
+  const opId = `ops:${norm}`;
+  if (graph.index.has(opId)) return opId;
+  const human = /^shaw|qa-user/.test(norm);
+  const node = { id: opId, cluster: 'ops', kind: human ? 'human' : 'daemon', name: norm,
+    val: human ? 12 : 8, status: 'live',
+    meta: { role: human ? 'human operator' : 'orchestration daemon', discovered: 'live' } };
+  graph.nodes.push(node); graph.index.set(opId, node);
+  broadcast({ type: 'node.add', node });
+  return opId;
+}
+setInterval(() => {
+  const d = db(); if (!d) return;
+  let rows;
+  try {
+    rows = d.prepare(
+      `SELECT id, from_agent, to_agent, type, priority, subject, created_at
+         FROM messages
+        WHERE created_at > ? ORDER BY created_at ASC LIMIT 100`
+    ).all(lastMsgSeen || '1970-01-01');
+  } catch { return; }
+  for (const m of rows) {
+    lastMsgSeen = m.created_at;
+    const from = ensureActorNode(m.from_agent);
+    const to = ensureActorNode(m.to_agent);
     if (from) flash(from, 'message');
     if (to) flash(to, 'message');
-    if (from && to) pulse(from, to, 'message');
-    else if (from) pulse(from, 'queue:bridged', 'message');
-    else if (to) pulse('queue:bridged', to, 'message');
-    broadcast({ type: 'ticker', text: `${msg.from||'?'} → ${msg.to||'?'}: ${(msg.subject||'').slice(0,60)}` });
-  });
+    if (from && to) pulse(from, to, m.type || 'message');
+    else if (from) pulse(from, 'queue:bus', m.type || 'message');
+    else if (to) pulse('queue:bus', to, m.type || 'message');
+    broadcast({ type: 'ticker',
+      text: `${normActor(m.from_agent)||'?'} → ${normActor(m.to_agent)||'?'} · ${m.type||'msg'}${m.subject?': '+m.subject.slice(0,48):''}` });
+  }
+}, 2000);
 
 // 3) commits -> repo node flash (repos/*/.git/logs/HEAD)
 chokidar.watch(path.join(REPOS, '*/.git/logs/HEAD'), { ignoreInitial: true,
