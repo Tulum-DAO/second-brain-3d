@@ -332,7 +332,7 @@ function init(data){
     .linkDirectionalParticles(0).linkDirectionalParticleWidth(2.2).linkDirectionalParticleSpeed(.01)
     .linkDirectionalParticleColor(l=> l.__pcolor || 'rgba(232,162,37,.8)')
     .enableNodeDrag(false)
-    .warmupTicks(90).cooldownTicks(200).d3AlphaDecay(0.018).d3VelocityDecay(0.32)
+    .warmupTicks(220).cooldownTicks(0).d3AlphaDecay(0.04).d3VelocityDecay(0.45)
     .onNodeHover(n=>{
       el.style.cursor=n?'pointer':'grab'
       if(n){rv.textContent=n.name;rp.textContent=n.cluster;rp.style.color=colorOf(n.cluster);post('brain:hover',{id:n.id,name:n.name,cluster:n.cluster})}
@@ -346,6 +346,7 @@ function init(data){
   const key=new THREE.PointLight(0xffeedd,1.5,1200);key.position.set(200,150,100);scene.add(key)
   scene.add(new THREE.AmbientLight(0x403a30,0.7))
 
+  window.__brain={Graph,DATA} // debug handle
   renderLegend()
   const st=data.stats
   document.getElementById('subtitle').innerHTML=`<b>${st.agents}</b> agents · <b>${st.repos}</b> repos · <b>${st.clients}</b> clients · <b>${st.live}</b> live · <b>${st.commEdges||0}</b> comm-edges · <b>${st.msgs24h||0}</b> msgs/24h`
@@ -361,7 +362,8 @@ function connectWS(){
   const ws=new WebSocket(`${proto}://${location.host}`)
   ws.onmessage=ev=>{
     const m=JSON.parse(ev.data)
-    if(m.type==='init'){ if(!Graph)init(m.graph); return }
+    if(m.type==='init'){ if(window.__ver&&m.version&&m.version!==window.__ver){location.reload();return} window.__ver=m.version; if(!Graph)init(m.graph); return }
+    if(m.type==='reload'){ location.reload(); return }
     if(m.type==='node.flash'){ flashNode(m.id, m.kind==='commit'?1.8:m.kind==='spawn'?2.0:1.2); return }
     if(m.type==='node.update'){ const n=byId.get(m.id); if(n){Object.assign(n,m.patch); if(n.__obj){n.__s=baseScale(n);n.__obj.scale.set(n.__s,n.__s,1)}} return }
     if(m.type==='link.pulse'){ pulseLink(m.source,m.target,m.kind); return }
