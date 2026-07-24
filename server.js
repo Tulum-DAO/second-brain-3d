@@ -69,26 +69,27 @@ function pulse(source, target, kind = 'message') {
 
 // ================= WATCHERS =================
 
-// 1) tmux liveness poll every 2s
-let prevLive = liveSessions();
+// 1) tmux liveness poll every 2s — reconcile EVERY node against the live tmux set,
+//    so agents, services AND ops actors (arkdata-merge-2/3 etc) reflect reality.
+let currentLive = liveSessions();
+// the tmux session name a node maps to (null = liveness N/A, e.g. repos/files)
+function sessionOf(n) {
+  if (n.kind === 'agent') return n.meta?.tmux || n.name;
+  if (n.kind === 'service') return n.name;
+  if (n.kind === 'daemon' || n.kind === 'human') return n.name; // ops actors
+  return null;
+}
 setInterval(() => {
   let cur;
   try { cur = liveSessions(); } catch { return; }
-  // newly appeared
-  for (const s of cur) if (!prevLive.has(s)) {
-    for (const pfx of ['agent:', 'service:']) {
-      const id = pfx + s;
-      if (graph.index.has(id)) { updateNode(id, { status: 'live' }); flash(id, 'spawn'); }
-    }
+  currentLive = cur;
+  for (const n of graph.nodes) {
+    const sess = sessionOf(n); if (!sess) continue;
+    const nowLive = cur.has(sess);
+    const wasLive = n.status === 'live';
+    if (nowLive && !wasLive) { updateNode(n.id, { status: 'live' }); flash(n.id, 'spawn'); }
+    else if (!nowLive && wasLive) { updateNode(n.id, { status: n.kind === 'service' ? 'down' : 'ember' }); }
   }
-  // disappeared
-  for (const s of prevLive) if (!cur.has(s)) {
-    for (const pfx of ['agent:', 'service:']) {
-      const id = pfx + s;
-      if (graph.index.has(id)) updateNode(id, { status: pfx === 'service:' ? 'down' : 'ember' });
-    }
-  }
-  prevLive = cur;
 }, 2000);
 
 // 2) inter-agent messages -> live pulses, polled from the canonical DB (state/tasks.db).
@@ -107,9 +108,10 @@ function ensureActorNode(name) {
   const opId = `ops:${norm}`;
   if (graph.index.has(opId)) return opId;
   const human = /^shaw|qa-user/.test(norm);
+  const status = currentLive.has(norm) ? 'live' : (human ? 'idle' : 'ember');
   const node = { id: opId, cluster: 'ops', kind: human ? 'human' : 'daemon', name: norm,
-    val: human ? 12 : 8, status: 'live',
-    meta: { role: human ? 'human operator' : 'orchestration daemon', discovered: 'live' } };
+    val: human ? 12 : 8, status,
+    meta: { role: human ? 'human operator' : 'orchestration daemon', discovered: true } };
   graph.nodes.push(node); graph.index.set(opId, node);
   broadcast({ type: 'node.add', node });
   return opId;
