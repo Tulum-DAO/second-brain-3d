@@ -85,12 +85,47 @@
   .panel .close:hover{color:var(--cream)}
 
   /* ticker */
-  .ticker{position:fixed;bottom:0;left:0;right:0;z-index:8;height:26px;overflow:hidden;
-    background:linear-gradient(to top,rgba(16,13,11,.9),transparent);pointer-events:none;
-    display:flex;align-items:center;padding:0 30px;font-size:10px;letter-spacing:.14em;color:var(--muted)}
+  .ticker{position:fixed;bottom:44px;left:0;right:0;z-index:8;height:22px;overflow:hidden;
+    pointer-events:none;display:flex;align-items:center;padding:0 30px;font-size:10px;letter-spacing:.14em;color:var(--muted)}
   .ticker .ev{white-space:nowrap;opacity:0;animation:tick 4s ease forwards}
   @keyframes tick{0%{opacity:0;transform:translateY(6px)}12%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0}}
   .ticker .ev .tag{color:var(--amber);margin-right:8px}
+
+  /* time scrubber */
+  .scrubber{position:fixed;bottom:0;left:0;right:0;z-index:11;height:44px;display:flex;align-items:center;gap:12px;
+    padding:0 24px;background:linear-gradient(to top,rgba(10,8,6,.96),rgba(10,8,6,.72));border-top:1px solid var(--line);pointer-events:auto}
+  .scr-btn{background:transparent;border:1px solid var(--line);color:var(--cream);font-family:inherit;font-size:10px;
+    letter-spacing:.14em;padding:5px 10px;border-radius:5px;cursor:pointer;transition:all .15s}
+  .scr-btn:hover{border-color:var(--amber);color:var(--amber)}
+  .scr-btn.on{background:var(--amber);color:#0e0c0a;border-color:var(--amber)}
+  #scr-live.live{color:#22c55e;border-color:rgba(34,197,94,.4)}
+  .scr-range{flex:1;-webkit-appearance:none;appearance:none;height:3px;border-radius:2px;
+    background:rgba(237,228,211,.18);outline:none;cursor:pointer}
+  .scr-range::-webkit-slider-thumb{-webkit-appearance:none;width:13px;height:13px;border-radius:50%;
+    background:var(--amber);box-shadow:0 0 10px rgba(232,162,37,.6);cursor:pointer}
+  .scr-range::-moz-range-thumb{width:13px;height:13px;border:0;border-radius:50%;background:var(--amber);cursor:pointer}
+  .scr-time{font-size:10px;letter-spacing:.1em;color:var(--muted);min-width:132px;text-align:center;white-space:nowrap}
+  .scr-time.replay{color:var(--amber)}
+  .scr-win{background:rgba(20,17,15,.9);border:1px solid var(--line);color:var(--cream);font-family:inherit;
+    font-size:10px;letter-spacing:.1em;padding:4px 6px;border-radius:5px;cursor:pointer;outline:none}
+
+  /* message inspector panel (right side) */
+  .msgpanel{position:fixed;z-index:13;top:0;right:0;height:100%;width:380px;max-width:92vw;background:rgba(14,11,9,.97);
+    border-left:1px solid var(--line);padding:24px 22px 60px;transform:translateX(110%);transition:transform .35s cubic-bezier(.4,0,.2,1);
+    pointer-events:auto;overflow:auto;backdrop-filter:blur(8px)}
+  .msgpanel.on{transform:translateX(0)}
+  .msgpanel .mk{font-size:9px;letter-spacing:.3em;text-transform:uppercase;color:var(--muted)}
+  .msgpanel .mt{font-size:15px;font-weight:600;letter-spacing:.02em;margin:8px 0 4px;color:var(--cream);word-break:break-word}
+  .msgpanel .mt .arw{color:var(--amber);margin:0 6px}
+  .msgpanel .close{position:absolute;top:16px;right:16px;cursor:pointer;color:var(--muted);font-size:16px}
+  .msgpanel .close:hover{color:var(--cream)}
+  .msg{border:1px solid rgba(237,228,211,.09);border-left-width:2px;border-radius:6px;padding:9px 11px;margin-top:12px;background:rgba(237,228,211,.02)}
+  .msg .mh{display:flex;justify-content:space-between;gap:8px;font-size:9px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
+  .msg .mtype{font-weight:600}
+  .msg .msub{font-size:12px;color:var(--cream);margin-top:5px;line-height:1.4}
+  .msg .mbody{font-size:10px;color:var(--muted);margin-top:5px;line-height:1.5;white-space:pre-wrap;max-height:120px;overflow:auto}
+  .msg .mdir{font-size:9px;letter-spacing:.08em;color:var(--muted);margin-top:6px}
+  .msg .mdir b{color:var(--cream);font-weight:500}
 
   .loader{position:fixed;inset:0;z-index:20;display:flex;align-items:center;justify-content:center;background:var(--bg);transition:opacity .8s ease;font-size:11px;letter-spacing:.3em;color:var(--muted);text-transform:uppercase}
   .loader.gone{opacity:0;pointer-events:none}
@@ -142,7 +177,20 @@
 </div>
 
 <div class="panel" id="panel"></div>
+<div class="msgpanel" id="msgpanel"></div>
 <div class="ticker" id="ticker"></div>
+
+<div class="scrubber" id="scrubber">
+  <button class="scr-btn" id="scr-toggle" title="play / pause replay">▶</button>
+  <button class="scr-btn" id="scr-live" title="jump to live">LIVE</button>
+  <input type="range" class="scr-range" id="scr-range" min="0" max="1000" value="1000">
+  <span class="scr-time" id="scr-time">live</span>
+  <select class="scr-win" id="scr-win" title="replay window">
+    <option value="1">1h</option><option value="6" selected>6h</option>
+    <option value="24">24h</option><option value="72">72h</option>
+  </select>
+</div>
+
 <div class="loader" id="loader"><span class="pulse">Waking the second brain…</span></div>
 
 <script type="module">
@@ -177,7 +225,7 @@ function makeTexture(color){
   return new THREE.CanvasTexture(cv)
 }
 CL.forEach(c=>clusterTex[c]=makeTexture(colorOf(c)))
-const DIM=0.05, FULL=0.9   // node opacity when dimmed / normal
+const DIM=0.28, FULL=0.9   // node opacity when dimmed / normal (dimmed still legible)
 
 const statusScale = s => s==='live'?1.35 : s==='hub'?1.0 : s==='idle'?0.95 : 0.55
 function baseScale(n){ return (3 + Math.sqrt(n.val||6)*1.4) * statusScale(n.status) }
@@ -221,10 +269,10 @@ function refreshLinks(){
   Graph.linkColor(l=>{
     const a=l.source.id||l.source, b=l.target.id||l.target
     const base=l.kind==='comm'?'rgba(232,162,37,.22)':(l.cross?'rgba(232,162,37,.12)':'rgba(237,228,211,.06)')
-    if(focusId) return (a===focusId||b===focusId) ? 'rgba(232,162,37,.7)' : 'rgba(237,228,211,.02)'
+    if(focusId) return (a===focusId||b===focusId) ? 'rgba(232,162,37,.75)' : 'rgba(237,228,211,.10)'
     if(!selected) return base
     const on=clusterOf(l.source)===selected||clusterOf(l.target)===selected
-    return on ? 'rgba(232,162,37,.5)' : 'rgba(237,228,211,.02)'
+    return on ? 'rgba(232,162,37,.5)' : 'rgba(237,228,211,.10)'
   })
 }
 function clearLegendActive(){
@@ -319,10 +367,49 @@ function flyTo(n){
 
 // ---------- flash / pulse animation ----------
 function flashNode(id,amt=1.2){flashing.set(id,Math.max(flashing.get(id)||0,amt))}
-function animFlashes(){
+
+// custom traveling pulse: a glowing sprite that flies source->target. Self-contained
+// (ForceGraph's emitParticle silently no-ops when linkDirectionalParticles=0).
+let pulseTex=null
+function pulseTexture(){
+  if(pulseTex)return pulseTex
+  const cv=document.createElement('canvas');cv.width=32;cv.height=32
+  const x=cv.getContext('2d'),g=x.createRadialGradient(16,16,0,16,16,16)
+  g.addColorStop(0,'#fff');g.addColorStop(.4,'rgba(255,255,255,.9)');g.addColorStop(1,'transparent')
+  x.fillStyle=g;x.fillRect(0,0,32,32)
+  pulseTex=new THREE.CanvasTexture(cv);return pulseTex
+}
+const activePulses=[] // {sprite,a,b,t,dur}
+function pulseLink(s,t,type){
+  ensureCommLink(s,t) // keep the static edge present for context + click-to-inspect
+  const a=byId.get(s), b=byId.get(t); if(!a||!b||!Graph)return
+  const col=new THREE.Color(pulseColor(type))
+  const mat=new THREE.SpriteMaterial({map:pulseTexture(),color:col,transparent:true,
+    opacity:1,depthWrite:false,blending:THREE.AdditiveBlending})
+  const sp=new THREE.Sprite(mat); sp.scale.set(9,9,1)
+  sp.position.set(a.x||0,a.y||0,a.z||0)
+  Graph.scene().add(sp)
+  activePulses.push({sprite:sp,a,b,t:0,dur:900+Math.random()*300})
+}
+function animFlashes(now){
+  // node flashes
   for(const[id,v]of flashing){
     const n=byId.get(id); if(n&&n.__obj){const s=n.__s*(1+v);n.__obj.scale.set(s,s,1)}
     const nv=v-0.045; if(nv<=0){flashing.delete(id);if(n&&n.__obj)n.__obj.scale.set(n.__s,n.__s,1)}else flashing.set(id,nv)
+  }
+  // traveling pulses
+  const dt=animFlashes._last?now-animFlashes._last:16; animFlashes._last=now
+  for(let i=activePulses.length-1;i>=0;i--){
+    const p=activePulses[i]; p.t+=dt
+    const f=p.t/p.dur
+    if(f>=1){ Graph.scene().remove(p.sprite); p.sprite.material.dispose(); activePulses.splice(i,1); continue }
+    const e=f<.5?2*f*f:1-Math.pow(-2*f+2,2)/2 // easeInOut
+    p.sprite.position.set(
+      (p.a.x||0)+((p.b.x||0)-(p.a.x||0))*e,
+      (p.a.y||0)+((p.b.y||0)-(p.a.y||0))*e,
+      (p.a.z||0)+((p.b.z||0)-(p.a.z||0))*e)
+    const sc=9*(1+Math.sin(f*Math.PI)*0.5); p.sprite.scale.set(sc,sc,1)
+    p.sprite.material.opacity=Math.sin(f*Math.PI) // fade in/out
   }
   requestAnimationFrame(animFlashes)
 }
@@ -340,10 +427,6 @@ function ensureCommLink(s,t){
   Graph.graphData(DATA)
   return l
 }
-function pulseLink(s,t,type){
-  const l=ensureCommLink(s,t)
-  if(l){ l.__pcolor=pulseColor(type); try{Graph.emitParticle(l)}catch{} }
-}
 
 // ---------- ticker ----------
 const tickerEl=document.getElementById('ticker')
@@ -352,6 +435,93 @@ function ticker(text){
   tickerEl.innerHTML='';tickerEl.appendChild(e)
   setTimeout(()=>{if(e.parentNode)e.remove()},4000)
 }
+
+// ---------- message inspector: click an edge to read the real messages ----------
+const msgpanel=document.getElementById('msgpanel')
+function fmtT(iso){ try{const d=new Date(iso);return d.toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})}catch{return iso} }
+async function inspectEdge(aId,bId){
+  const a=byId.get(aId), b=byId.get(bId); if(!a||!b)return
+  msgpanel.innerHTML=`<div class="close" id="mpclose">×</div><div class="mk">Conversation</div>
+    <div class="mt">${a.name}<span class="arw">⇄</span>${b.name}</div><div class="mk" style="margin-top:14px">loading…</div>`
+  msgpanel.classList.add('on')
+  document.getElementById('mpclose').onclick=()=>msgpanel.classList.remove('on')
+  try{
+    const r=await fetch(`/api/messages?a=${encodeURIComponent(a.name)}&b=${encodeURIComponent(b.name)}`)
+    const d=await r.json()
+    const rows=d.messages.map(m=>{
+      const col=pulseColor(m.type)
+      return `<div class="msg" style="border-left-color:${col}">
+        <div class="mh"><span class="mtype" style="color:${col}">${m.type||'msg'}</span><span>${fmtT(m.t)}</span></div>
+        ${m.subject?`<div class="msub">${esc(m.subject)}</div>`:''}
+        ${m.body?`<div class="mbody">${esc(m.body)}</div>`:''}
+        <div class="mdir"><b>${esc(m.from)}</b> → <b>${esc(m.to)}</b> · ${m.status||''}</div></div>`
+    }).join('')
+    msgpanel.innerHTML=`<div class="close" id="mpclose">×</div><div class="mk">Conversation · ${d.count} message${d.count===1?'':'s'}</div>
+      <div class="mt">${a.name}<span class="arw">⇄</span>${b.name}</div>${rows||'<div class="mk" style="margin-top:14px">no direct messages</div>'}`
+    document.getElementById('mpclose').onclick=()=>msgpanel.classList.remove('on')
+  }catch(e){ msgpanel.querySelector('.mk:last-child').textContent='failed to load' }
+}
+function esc(s){ return String(s==null?'':s).replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c])) }
+
+// ---------- time scrubber: replay the last N hours of message flow ----------
+const scr={ events:[], hours:6, playing:false, idx:0, live:true, t0:0, t1:0, raf:0, speed:1 }
+const scrRange=document.getElementById('scr-range'), scrTime=document.getElementById('scr-time')
+const scrToggle=document.getElementById('scr-toggle'), scrLiveBtn=document.getElementById('scr-live'), scrWin=document.getElementById('scr-win')
+async function loadHistory(hours){
+  try{
+    const r=await fetch(`/api/history?hours=${hours}`); const d=await r.json()
+    scr.events=d.events; scr.hours=hours
+    if(scr.events.length){ scr.t0=+new Date(scr.events[0].t); scr.t1=+new Date(scr.events[scr.events.length-1].t) }
+  }catch{ scr.events=[] }
+}
+function scrSetLive(){
+  scr.live=true; scr.playing=false; cancelAnimationFrame(scr.raf)
+  scrToggle.textContent='▶'; scrToggle.classList.remove('on')
+  scrLiveBtn.classList.add('live'); scrTime.textContent='live'; scrTime.classList.remove('replay')
+  scrRange.value=1000
+}
+function scrSeekToFraction(f){
+  scr.live=false; scrLiveBtn.classList.remove('live'); scrTime.classList.add('replay')
+  const span=scr.t1-scr.t0||1, tt=scr.t0+span*f
+  // advance idx to tt; fire any events we cross while dragging forward (visual scrub)
+  scr.idx=scr.events.findIndex(e=>+new Date(e.t)>=tt)
+  if(scr.idx<0)scr.idx=scr.events.length
+  scrTime.textContent=new Date(tt).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
+}
+function scrPlay(){
+  if(!scr.events.length)return
+  scr.live=false; scr.playing=true; scrToggle.textContent='❚❚'; scrToggle.classList.add('on')
+  scrLiveBtn.classList.remove('live'); scrTime.classList.add('replay')
+  const span=scr.t1-scr.t0||1
+  // start cursor from the current slider position; if we're at/near the end, restart from the beginning
+  let f=scrRange.value/1000
+  if(f>=0.999){ f=0 }
+  scr.cursor=scr.t0+span*f
+  // set idx to the first event at/after the cursor so we don't re-fire the past
+  scr.idx=scr.events.findIndex(e=>+new Date(e.t)>scr.cursor); if(scr.idx<0)scr.idx=scr.events.length
+  let last=performance.now()
+  const REPLAY_MS=45000 // whole window plays in ~45s
+  const step=(now)=>{
+    if(!scr.playing)return
+    const dt=now-last; last=now
+    scr.cursor+=dt/REPLAY_MS*span
+    while(scr.idx<scr.events.length && +new Date(scr.events[scr.idx].t)<=scr.cursor){
+      const e=scr.events[scr.idx]; pulseLink(e.from,e.to,e.type); flashNode(e.from,1.0); flashNode(e.to,1.0)
+      ticker(`${e.fromName} → ${e.toName} · ${e.type||'msg'}`)
+      scr.idx++
+    }
+    scrRange.value=Math.min(1000,Math.max(0,(scr.cursor-scr.t0)/span*1000))
+    scrTime.textContent=new Date(scr.cursor).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
+    if(scr.idx>=scr.events.length){ scrSetLive(); return }
+    scr.raf=requestAnimationFrame(step)
+  }
+  scr.raf=requestAnimationFrame(step)
+}
+function scrPause(){ scr.playing=false; cancelAnimationFrame(scr.raf); scrToggle.textContent='▶'; scrToggle.classList.remove('on') }
+scrToggle.onclick=()=>{ if(scr.playing)scrPause(); else scrPlay() }
+scrLiveBtn.onclick=()=>scrSetLive()
+scrRange.oninput=()=>{ scrPause(); scr.cursor=scr.t0+(scr.t1-scr.t0)*(scrRange.value/1000); scrSeekToFraction(scrRange.value/1000) }
+scrWin.onchange=async()=>{ await loadHistory(+scrWin.value); if(!scr.live)scrSetLive() }
 
 // ---------- settle: guarantee sprites sit on node coords + frame the whole constellation ----------
 function syncSprites(){ for(const n of DATA.nodes) if(n.__obj) n.__obj.position.set(n.x||0,n.y||0,n.z||0) }
@@ -394,7 +564,9 @@ function init(data){
       else if(!selected&&!focusId){rv.textContent='the whole operation';rp.textContent='all pillars';rp.style.color='var(--amber)'}
     })
     .onNodeClick(n=>{ flyTo(n); post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta}) })
-    .onBackgroundClick(()=>{ clearFocus(); panel.classList.remove('on'); Graph.zoomToFit(900,80) })
+    .onLinkClick(l=>{ const a=l.source.id||l.source,b=l.target.id||l.target
+      if(l.kind==='comm'||l.kind==='member'||l.__new) inspectEdge(a,b) })
+    .onBackgroundClick(()=>{ clearFocus(); panel.classList.remove('on'); msgpanel.classList.remove('on'); Graph.zoomToFit(900,80) })
 
   // force tuning: strong repulsion + short member springs spread the pillars apart;
   // weak comm springs so cross-cluster edges don't yank everything into a ball.
@@ -408,7 +580,7 @@ function init(data){
   const key=new THREE.PointLight(0xffeedd,1.5,1200);key.position.set(200,150,100);scene.add(key)
   scene.add(new THREE.AmbientLight(0x403a30,0.7))
 
-  window.__brain={Graph,DATA,focusOn,clearFocus,get focusId(){return focusId}} // debug handle
+  window.__brain={Graph,DATA,focusOn,clearFocus,pulseLink,get focusId(){return focusId},get pulses(){return activePulses}} // debug handle
   renderLegend()
   const st=data.stats
   document.getElementById('subtitle').innerHTML=`<b>${st.agents}</b> agents · <b>${st.repos}</b> repos · <b>${st.clients}</b> clients · <b>${st.live}</b> live · <b>${st.commEdges||0}</b> comm-edges · <b>${st.msgs24h||0}</b> msgs/24h`
@@ -416,6 +588,8 @@ function init(data){
   setTimeout(()=>settleView(),7000)
   addEventListener('resize',()=>Graph.width(el.clientWidth).height(el.clientHeight))
   animFlashes()
+  if(EMBED)document.getElementById('scrubber').style.display='none'
+  loadHistory(6).then(()=>scrSetLive())
 }
 
 // ---------- websocket deltas ----------
@@ -428,10 +602,10 @@ function connectWS(){
     if(m.type==='reload'){ location.reload(); return }
     if(m.type==='node.flash'){ flashNode(m.id, m.kind==='commit'?1.8:m.kind==='spawn'?2.0:1.2); return }
     if(m.type==='node.update'){ const n=byId.get(m.id); if(n){Object.assign(n,m.patch); if(n.__obj){n.__s=baseScale(n);n.__obj.scale.set(n.__s,n.__s,1)}} return }
-    if(m.type==='link.pulse'){ pulseLink(m.source,m.target,m.kind); return }
+    if(m.type==='link.pulse'){ if(scr.live)pulseLink(m.source,m.target,m.kind); return }
     if(m.type==='node.add'){ if(!byId.has(m.node.id)){DATA.nodes.push(m.node);byId.set(m.node.id,m.node);Graph.graphData(DATA);renderLegend();flashNode(m.node.id,2)} return }
     if(m.type==='node.remove'){ if(byId.has(m.id)){DATA.nodes=DATA.nodes.filter(n=>n.id!==m.id);DATA.links=DATA.links.filter(l=>(l.source.id||l.source)!==m.id&&(l.target.id||l.target)!==m.id);byId.delete(m.id);Graph.graphData(DATA);renderLegend()} return }
-    if(m.type==='ticker'){ ticker(m.text); return }
+    if(m.type==='ticker'){ if(scr.live)ticker(m.text); return }
   }
   ws.onclose=()=>setTimeout(connectWS,2500)
   ws.onerror=()=>ws.close()
