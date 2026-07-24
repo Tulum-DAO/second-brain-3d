@@ -155,11 +155,15 @@ if (EMBED) document.body.classList.add('embed')
 const CLUSTERS = {
   agents:{label:'AGENTS',color:'#E8A225'}, services:{label:'SERVICES',color:'#ec4899'},
   repos:{label:'REPOS',color:'#06b6d4'}, clients:{label:'CLIENTS',color:'#22c55e'},
-  prompts:{label:'PROMPTS',color:'#8b5cf6'}, queue:{label:'MESSAGES',color:'#eab308'},
-  state:{label:'STATE',color:'#8A7F6E'},
+  prompts:{label:'PROMPTS',color:'#8b5cf6'}, ops:{label:'OPS',color:'#f97316'},
+  queue:{label:'MESSAGES',color:'#eab308'}, state:{label:'STATE',color:'#8A7F6E'},
 }
 const CL = Object.keys(CLUSTERS)
 const colorOf = c => (CLUSTERS[c]?.color) || '#fff'
+// pulse color by message type (mirrors MSG_COLORS in collect.js)
+const MSG_COLORS = {escalate:'#ef4444',reply:'#06b6d4',route:'#E8A225',request:'#22c55e',
+  broadcast:'#8b5cf6',status:'#8A7F6E',task:'#eab308',asset_registered:'#22c55e'}
+const pulseColor = t => MSG_COLORS[t] || '#E8A225'
 
 // shared additive sprite material per cluster (cheap cluster-dim)
 const mat = {}
@@ -204,8 +208,8 @@ const clusterOf = end => (typeof end==='object'&&end) ? end.cluster : (byId.get(
 
 function refreshLinks(){
   Graph.linkColor(l=>{
-    if(l.__pulse) return 'rgba(232,162,37,.6)'
-    if(!selected) return l.cross ? 'rgba(232,162,37,.16)' : 'rgba(237,228,211,.10)'
+    const base=l.kind==='comm'?'rgba(232,162,37,.22)':(l.cross?'rgba(232,162,37,.12)':'rgba(237,228,211,.06)')
+    if(!selected) return base
     const on=clusterOf(l.source)===selected||clusterOf(l.target)===selected
     return on ? 'rgba(232,162,37,.5)' : 'rgba(237,228,211,.02)'
   })
@@ -287,18 +291,22 @@ function animFlashes(){
   requestAnimationFrame(animFlashes)
 }
 
+function indexCommLinks(){ // register comm edges from the snapshot so pulses reuse them
+  commLinks.clear()
+  for(const l of DATA.links){ if(l.kind==='comm'){const s=l.source.id||l.source,t=l.target.id||l.target;commLinks.set(s+'|'+t,l)} }
+}
 function ensureCommLink(s,t){
   const key=s+'|'+t
   if(commLinks.has(key))return commLinks.get(key)
   if(!byId.has(s)||!byId.has(t))return null
-  const l={source:s,target:t,__comm:true,cross:true}
+  const l={source:s,target:t,kind:'comm',__new:true,cross:true}
   DATA.links.push(l); commLinks.set(key,l)
   Graph.graphData(DATA)
   return l
 }
-function pulseLink(s,t){
+function pulseLink(s,t,type){
   const l=ensureCommLink(s,t)
-  if(l){try{Graph.emitParticle(l)}catch{}}
+  if(l){ l.__pcolor=pulseColor(type); try{Graph.emitParticle(l)}catch{} }
 }
 
 // ---------- ticker ----------
@@ -311,7 +319,7 @@ function ticker(text){
 
 // ---------- init graph ----------
 function init(data){
-  DATA=data; byId=new Map(DATA.nodes.map(n=>[n.id,n]))
+  DATA=data; byId=new Map(DATA.nodes.map(n=>[n.id,n])); indexCommLinks()
   Graph=ForceGraph3D()(el)
     .graphData(DATA)
     .width(el.clientWidth).height(el.clientHeight)
@@ -319,9 +327,10 @@ function init(data){
     .nodeThreeObject(nodeSprite).nodeThreeObjectExtend(false)
     .nodeVal('val')
     .nodeLabel(n=>`<div style="color:${colorOf(n.cluster)};font-family:'Azeret Mono',monospace;font-size:12px;background:rgba(10,8,6,.92);padding:7px 11px;border-radius:6px;line-height:1.5;border:1px solid rgba(237,228,211,.14)"><div>${n.name}</div><div style="opacity:.5;font-size:9px;letter-spacing:.14em;margin-top:3px">${n.cluster} · ${n.status}</div></div>`)
-    .linkColor(l=>l.cross?'rgba(232,162,37,.16)':'rgba(237,228,211,.10)').linkWidth(0.6).linkOpacity(.5)
-    .linkDirectionalParticles(l=>l.__comm?0:(l.cross?0:1)).linkDirectionalParticleWidth(1.4).linkDirectionalParticleSpeed(.006)
-    .linkDirectionalParticleColor(()=> 'rgba(232,162,37,.7)')
+    .linkColor(l=>l.kind==='comm'?'rgba(232,162,37,.22)':(l.cross?'rgba(232,162,37,.12)':'rgba(237,228,211,.06)'))
+    .linkWidth(l=>l.kind==='comm'?Math.min(0.4+Math.log2((l.weight||1)+1)*0.35,2.4):0.5).linkOpacity(.5)
+    .linkDirectionalParticles(0).linkDirectionalParticleWidth(2.2).linkDirectionalParticleSpeed(.01)
+    .linkDirectionalParticleColor(l=> l.__pcolor || 'rgba(232,162,37,.8)')
     .enableNodeDrag(false)
     .warmupTicks(90).cooldownTicks(200).d3AlphaDecay(0.018).d3VelocityDecay(0.32)
     .onNodeHover(n=>{
@@ -338,7 +347,8 @@ function init(data){
   scene.add(new THREE.AmbientLight(0x403a30,0.7))
 
   renderLegend()
-  document.getElementById('subtitle').innerHTML=`<b>${data.stats.agents}</b> agents · <b>${data.stats.repos}</b> repos · <b>${data.stats.clients}</b> clients · <b>${data.stats.live}</b> live`
+  const st=data.stats
+  document.getElementById('subtitle').innerHTML=`<b>${st.agents}</b> agents · <b>${st.repos}</b> repos · <b>${st.clients}</b> clients · <b>${st.live}</b> live · <b>${st.commEdges||0}</b> comm-edges · <b>${st.msgs24h||0}</b> msgs/24h`
   setTimeout(()=>{try{Graph.zoomToFit(0,80)}catch{}},700)
   setTimeout(()=>document.getElementById('loader').classList.add('gone'),1000)
   addEventListener('resize',()=>Graph.width(el.clientWidth).height(el.clientHeight))
@@ -354,7 +364,7 @@ function connectWS(){
     if(m.type==='init'){ if(!Graph)init(m.graph); return }
     if(m.type==='node.flash'){ flashNode(m.id, m.kind==='commit'?1.8:m.kind==='spawn'?2.0:1.2); return }
     if(m.type==='node.update'){ const n=byId.get(m.id); if(n){Object.assign(n,m.patch); if(n.__obj){n.__s=baseScale(n);n.__obj.scale.set(n.__s,n.__s,1)}} return }
-    if(m.type==='link.pulse'){ pulseLink(m.source,m.target); return }
+    if(m.type==='link.pulse'){ pulseLink(m.source,m.target,m.kind); return }
     if(m.type==='node.add'){ if(!byId.has(m.node.id)){DATA.nodes.push(m.node);byId.set(m.node.id,m.node);Graph.graphData(DATA);renderLegend();flashNode(m.node.id,2)} return }
     if(m.type==='node.remove'){ if(byId.has(m.id)){DATA.nodes=DATA.nodes.filter(n=>n.id!==m.id);DATA.links=DATA.links.filter(l=>(l.source.id||l.source)!==m.id&&(l.target.id||l.target)!==m.id);byId.delete(m.id);Graph.graphData(DATA);renderLegend()} return }
     if(m.type==='ticker'){ ticker(m.text); return }
