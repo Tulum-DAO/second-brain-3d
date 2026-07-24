@@ -11,6 +11,9 @@ import { buildGraph, liveSessions, resolveActorId, normActor, db, AO, REPOS } fr
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 7373;
 const PUBLIC = path.join(__dirname, 'public');
+// bumps every server start + whenever index.html changes -> clients auto-reload
+let VERSION = Date.now();
+try { VERSION = Math.floor(fs.statSync(path.join(PUBLIC, 'index.html')).mtimeMs); } catch {}
 
 // ---- live graph model in memory ----
 let graph = buildGraph();
@@ -44,7 +47,7 @@ const server = http.createServer((req, res) => {
 // ---- WebSocket broadcast ----
 const wss = new WebSocketServer({ server });
 wss.on('connection', (ws) => {
-  ws.send(JSON.stringify({ type: 'init', graph: { nodes: graph.nodes, links: graph.links, stats: graph.stats } }));
+  ws.send(JSON.stringify({ type: 'init', version: VERSION, graph: { nodes: graph.nodes, links: graph.links, stats: graph.stats } }));
 });
 function broadcast(msg) {
   const s = JSON.stringify(msg);
@@ -184,8 +187,18 @@ function reconcile() {
   console.log('[brain] reconciled:', graph.nodes.length, 'nodes');
 }
 
-server.listen(PORT, '0.0.0.0', () => {
-  console.log(`[brain] listening on http://0.0.0.0:${PORT}  (WS same port)`);
+// live client hot-reload: editing the client bumps VERSION + pushes reload to open tabs
+chokidar.watch(path.join(PUBLIC, 'index.html'), { ignoreInitial: true })
+  .on('change', () => {
+    try { VERSION = Math.floor(fs.statSync(path.join(PUBLIC, 'index.html')).mtimeMs); } catch { VERSION = Date.now(); }
+    broadcast({ type: 'reload' });
+    console.log('[brain] client changed -> pushed reload, version', VERSION);
+  });
+
+// bind loopback only: tailscale serve proxies to localhost:7373, and this avoids
+// colliding with tailscaled's own listener on the tailnet IP:7373.
+server.listen(PORT, '127.0.0.1', () => {
+  console.log(`[brain] listening on http://127.0.0.1:${PORT}  (WS same port)`);
 });
 
 process.on('uncaughtException', (e) => console.error('[brain] uncaught', e));
