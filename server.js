@@ -31,6 +31,52 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ nodes: graph.nodes, links: graph.links, stats: graph.stats }));
     return;
   }
+  // timeline for the scrubber: every message in the last N hours, resolved to node ids
+  if (url === '/api/history') {
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    const hours = Math.min(Math.max(parseInt(q.get('hours') || '6', 10), 1), 168);
+    const d = db();
+    let events = [];
+    if (d) {
+      try {
+        const rows = d.prepare(
+          `SELECT id, from_agent, to_agent, type, subject, created_at
+             FROM messages WHERE created_at > datetime('now', ?) AND to_agent IS NOT NULL
+             ORDER BY created_at ASC LIMIT 4000`).all(`-${hours} hour`);
+        for (const m of rows) {
+          const from = resolveActorId(m.from_agent, graph), to = resolveActorId(m.to_agent, graph);
+          if (!from || !to) continue;
+          events.push({ t: m.created_at, from, to, type: m.type,
+            fromName: normActor(m.from_agent), toName: normActor(m.to_agent),
+            subject: (m.subject || '').slice(0, 80) });
+        }
+      } catch {}
+    }
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify({ hours, count: events.length, events }));
+    return;
+  }
+  // inspect an edge: recent messages between two actors (either direction)
+  if (url === '/api/messages') {
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    const a = normActor(q.get('a')), b = normActor(q.get('b'));
+    const d = db();
+    let msgs = [];
+    if (d && a && b) {
+      try {
+        msgs = d.prepare(
+          `SELECT from_agent, to_agent, type, subject, body, status, created_at
+             FROM messages
+            WHERE (from_agent=? AND to_agent=?) OR (from_agent=? AND to_agent=?)
+            ORDER BY created_at DESC LIMIT 40`).all(a, b, b, a)
+          .map(m => ({ from: normActor(m.from_agent), to: normActor(m.to_agent), type: m.type,
+            subject: m.subject, body: (m.body || '').slice(0, 600), status: m.status, t: m.created_at }));
+      } catch {}
+    }
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify({ a, b, count: msgs.length, messages: msgs }));
+    return;
+  }
   if (url === '/healthz') { res.writeHead(200); res.end('ok'); return; }
   // /field is the one canonical page; / redirects to it. everything else -> static file.
   if (url === '/') { res.writeHead(302, { location: '/field' }); res.end(); return; }
