@@ -393,18 +393,30 @@ function pulseTexture(){
   x.fillStyle=g;x.fillRect(0,0,32,32)
   pulseTex=new THREE.CanvasTexture(cv);return pulseTex
 }
-const activePulses=[] // {sprite,a,b,t,dur}
+const activePulses=[] // {head,trail,a,b,t,dur,col}
+const TRAIL_PTS=18   // vertices in the comet/edge-fill polyline
+function makeTrail(){
+  const geo=new THREE.BufferGeometry()
+  geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(TRAIL_PTS*3),3))
+  geo.setAttribute('color',new THREE.BufferAttribute(new Float32Array(TRAIL_PTS*3),3))
+  const mat=new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:1,
+    blending:THREE.AdditiveBlending,depthWrite:false})
+  return new THREE.Line(geo,mat)
+}
 function pulseLink(s,t,type){
   ensureCommLink(s,t) // keep the static edge present for context + click-to-inspect
   const link=commFor(s,t); if(link) link.__act=1   // light the edge (heat)
   const a=byId.get(s), b=byId.get(t); if(!a||!b||!Graph)return
   const col=new THREE.Color(pulseColor(type))
+  // bright moving head (the packet)
   const mat=new THREE.SpriteMaterial({map:pulseTexture(),color:col,transparent:true,
     opacity:1,depthWrite:false,blending:THREE.AdditiveBlending})
-  const sp=new THREE.Sprite(mat); sp.scale.set(14,14,1)
-  sp.position.set(a.x||0,a.y||0,a.z||0)
-  Graph.scene().add(sp)
-  activePulses.push({sprite:sp,a,b,t:0,dur:1300+Math.random()*400})
+  const head=new THREE.Sprite(mat); head.scale.set(11,11,1)
+  head.position.set(a.x||0,a.y||0,a.z||0)
+  // comet trail = directional edge-fill: lights the traversed part of the edge, bright at head
+  const trail=makeTrail()
+  Graph.scene().add(trail); Graph.scene().add(head)
+  activePulses.push({head,trail,a,b,t:0,dur:1400+Math.random()*400,col})
 }
 function animFlashes(now){
   // node flashes
@@ -412,19 +424,38 @@ function animFlashes(now){
     const n=byId.get(id); if(n&&n.__obj){const s=n.__s*(1+v);n.__obj.scale.set(s,s,1)}
     const nv=v-0.045; if(nv<=0){flashing.delete(id);if(n&&n.__obj)n.__obj.scale.set(n.__s,n.__s,1)}else flashing.set(id,nv)
   }
-  // traveling pulses
+  // traveling pulses: comet head + directional edge-fill trail
   const dt=animFlashes._last?now-animFlashes._last:16; animFlashes._last=now
   for(let i=activePulses.length-1;i>=0;i--){
     const p=activePulses[i]; p.t+=dt
     const f=p.t/p.dur
-    if(f>=1){ Graph.scene().remove(p.sprite); p.sprite.material.dispose(); activePulses.splice(i,1); continue }
-    const e=f<.5?2*f*f:1-Math.pow(-2*f+2,2)/2 // easeInOut
-    p.sprite.position.set(
-      (p.a.x||0)+((p.b.x||0)-(p.a.x||0))*e,
-      (p.a.y||0)+((p.b.y||0)-(p.a.y||0))*e,
-      (p.a.z||0)+((p.b.z||0)-(p.a.z||0))*e)
-    const sc=14*(1+Math.sin(f*Math.PI)*0.5); p.sprite.scale.set(sc,sc,1)
-    p.sprite.material.opacity=Math.sin(f*Math.PI) // fade in/out
+    if(f>=1){ Graph.scene().remove(p.head); Graph.scene().remove(p.trail)
+      p.head.material.dispose(); p.trail.geometry.dispose(); p.trail.material.dispose()
+      activePulses.splice(i,1); continue }
+    const e=f<.5?2*f*f:1-Math.pow(-2*f+2,2)/2 // easeInOut head position along edge
+    const ax=p.a.x||0,ay=p.a.y||0,az=p.a.z||0, bx=p.b.x||0,by=p.b.y||0,bz=p.b.z||0
+    const hx=ax+(bx-ax)*e, hy=ay+(by-ay)*e, hz=az+(bz-az)*e
+    // head
+    p.head.position.set(hx,hy,hz)
+    const sc=11*(1+Math.sin(f*Math.PI)*0.6); p.head.scale.set(sc,sc,1)
+    p.head.material.opacity=Math.min(1,Math.sin(f*Math.PI)*1.6)
+    // trail: sample from source(a) up to head(e). j=0 at a (faded), j=last at head (bright)
+    // -> the edge visibly FILLS from sender toward recipient, brightest at the moving head.
+    const pos=p.trail.geometry.attributes.position.array
+    const col=p.trail.geometry.attributes.color.array
+    const gFade=Math.sin(f*Math.PI) // whole comet fades in/out over its life
+    const TAIL=0.34 // comet length as a fraction of the full edge
+    for(let j=0;j<TRAIL_PTS;j++){
+      const u=j/(TRAIL_PTS-1)                 // 0..1 back-to-front
+      const frac=Math.max(0,e-TAIL*(1-u))     // spans [e-TAIL, e], clamped at source
+      pos[j*3]  =ax+(bx-ax)*frac
+      pos[j*3+1]=ay+(by-ay)*frac
+      pos[j*3+2]=az+(bz-az)*frac
+      const w=Math.pow(u,1.7)*gFade           // bright at head, fades toward tail (black=invisible additive)
+      col[j*3]  =p.col.r*w; col[j*3+1]=p.col.g*w; col[j*3+2]=p.col.b*w
+    }
+    p.trail.geometry.attributes.position.needsUpdate=true
+    p.trail.geometry.attributes.color.needsUpdate=true
   }
   // edge heat decay: fade each active edge over ~1.6s; throttled re-apply so the glow renders
   let anyAct=false
