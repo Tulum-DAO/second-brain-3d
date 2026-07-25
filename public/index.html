@@ -265,16 +265,30 @@ function renderLegend(){
 }
 const clusterOf = end => (typeof end==='object'&&end) ? end.cluster : (byId.get(end)?.cluster)
 
-function refreshLinks(){
-  Graph.linkColor(l=>{
-    const a=l.source.id||l.source, b=l.target.id||l.target
-    const base=l.kind==='comm'?'rgba(232,162,37,.22)':(l.cross?'rgba(232,162,37,.12)':'rgba(237,228,211,.06)')
-    if(focusId) return (a===focusId||b===focusId) ? 'rgba(232,162,37,.75)' : 'rgba(237,228,211,.10)'
-    if(!selected) return base
-    const on=clusterOf(l.source)===selected||clusterOf(l.target)===selected
-    return on ? 'rgba(232,162,37,.5)' : 'rgba(237,228,211,.10)'
-  })
+// unified link styling — incorporates focus/select dimming AND time-activity heat (__act)
+function linkColorFn(l){
+  const a=l.source.id||l.source, b=l.target.id||l.target
+  const act=l.__act||0
+  // dimming context
+  if(focusId && !(a===focusId||b===focusId)) return act>0?`rgba(255,${(200-act*40)|0},${(120-act*80)|0},${(0.25+act*0.6).toFixed(3)})`:'rgba(237,228,211,.06)'
+  if(selected && !(clusterOf(l.source)===selected||clusterOf(l.target)===selected)) return 'rgba(237,228,211,.06)'
+  if(l.kind==='comm'){
+    if(act>0){ // hot: base amber -> bright white-amber as activity rises
+      const r=(232+(255-232)*act)|0, g=(162+(255-162)*act)|0, bl=(37+(235-37)*act)|0
+      return `rgba(${r},${g},${bl},${(0.30+act*0.68).toFixed(3)})`
+    }
+    return (focusId&&(a===focusId||b===focusId))?'rgba(232,162,37,.75)':'rgba(232,162,37,.22)'
+  }
+  return l.cross?'rgba(232,162,37,.12)':'rgba(237,228,211,.08)'
 }
+function linkWidthFn(l){
+  const base=l.kind==='comm'?Math.min(0.4+Math.log2((l.weight||1)+1)*0.35,2.4):0.5
+  return base + (l.__act||0)*5   // active edges swell noticeably
+}
+function reapplyLinks(){ if(Graph) Graph.linkColor(linkColorFn).linkWidth(linkWidthFn) }
+function refreshLinks(){ reapplyLinks() }
+// find the comm edge joining two actors regardless of stored direction
+function commFor(s,t){ return commLinks.get(s+'|'+t)||commLinks.get(t+'|'+s)||null }
 function clearLegendActive(){
   document.querySelectorAll('.lg').forEach(e=>{e.classList.remove('active','dim');e.style.background='';e.style.borderColor=''})
 }
@@ -382,14 +396,15 @@ function pulseTexture(){
 const activePulses=[] // {sprite,a,b,t,dur}
 function pulseLink(s,t,type){
   ensureCommLink(s,t) // keep the static edge present for context + click-to-inspect
+  const link=commFor(s,t); if(link) link.__act=1   // light the edge (heat)
   const a=byId.get(s), b=byId.get(t); if(!a||!b||!Graph)return
   const col=new THREE.Color(pulseColor(type))
   const mat=new THREE.SpriteMaterial({map:pulseTexture(),color:col,transparent:true,
     opacity:1,depthWrite:false,blending:THREE.AdditiveBlending})
-  const sp=new THREE.Sprite(mat); sp.scale.set(9,9,1)
+  const sp=new THREE.Sprite(mat); sp.scale.set(14,14,1)
   sp.position.set(a.x||0,a.y||0,a.z||0)
   Graph.scene().add(sp)
-  activePulses.push({sprite:sp,a,b,t:0,dur:900+Math.random()*300})
+  activePulses.push({sprite:sp,a,b,t:0,dur:1300+Math.random()*400})
 }
 function animFlashes(now){
   // node flashes
@@ -408,9 +423,13 @@ function animFlashes(now){
       (p.a.x||0)+((p.b.x||0)-(p.a.x||0))*e,
       (p.a.y||0)+((p.b.y||0)-(p.a.y||0))*e,
       (p.a.z||0)+((p.b.z||0)-(p.a.z||0))*e)
-    const sc=9*(1+Math.sin(f*Math.PI)*0.5); p.sprite.scale.set(sc,sc,1)
+    const sc=14*(1+Math.sin(f*Math.PI)*0.5); p.sprite.scale.set(sc,sc,1)
     p.sprite.material.opacity=Math.sin(f*Math.PI) // fade in/out
   }
+  // edge heat decay: fade each active edge over ~1.6s; throttled re-apply so the glow renders
+  let anyAct=false
+  for(const l of DATA.links){ if(l.__act){ l.__act=Math.max(0,l.__act-dt/1600); anyAct=true } }
+  if(anyAct && now-(animFlashes._lastLink||0)>70){ reapplyLinks(); animFlashes._lastLink=now }
   requestAnimationFrame(animFlashes)
 }
 
@@ -474,19 +493,38 @@ async function loadHistory(hours){
     if(scr.events.length){ scr.t0=+new Date(scr.events[0].t); scr.t1=+new Date(scr.events[scr.events.length-1].t) }
   }catch{ scr.events=[] }
 }
+const scrClock=tt=>new Date(tt).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
+function clearHeat(){ for(const l of DATA.links) l.__act=0; reapplyLinks() }
 function scrSetLive(){
   scr.live=true; scr.playing=false; cancelAnimationFrame(scr.raf)
   scrToggle.textContent='▶'; scrToggle.classList.remove('on')
   scrLiveBtn.classList.add('live'); scrTime.textContent='live'; scrTime.classList.remove('replay')
-  scrRange.value=1000
+  scrRange.value=1000; clearHeat()
+}
+// snapshot: light the most-recent messages leading up to the cursor, with recency
+// falloff. Traffic is bursty (hours-long gaps), so we rank by count, not clock time,
+// which guarantees DRAGGING always shows the recent activity trail at that point.
+const SNAP_N=22 // how many recent messages form the trail
+function applySnapshotAt(cursorMs){
+  for(const l of DATA.links) if(l.kind==='comm') l.__act=0
+  // find index of last event at/before cursor
+  let hi=-1; for(let i=0;i<scr.events.length;i++){ if(+new Date(scr.events[i].t)<=cursorMs) hi=i; else break }
+  let lit=0
+  for(let k=0;k<SNAP_N && hi-k>=0;k++){
+    const e=scr.events[hi-k]
+    const link=commFor(e.from,e.to)
+    const w=1-(k/SNAP_N)*0.82   // newest ~1.0, oldest in trail ~0.18
+    if(link){ link.__act=Math.max(link.__act, w); lit++ }
+  }
+  reapplyLinks(); return lit
 }
 function scrSeekToFraction(f){
   scr.live=false; scrLiveBtn.classList.remove('live'); scrTime.classList.add('replay')
   const span=scr.t1-scr.t0||1, tt=scr.t0+span*f
-  // advance idx to tt; fire any events we cross while dragging forward (visual scrub)
-  scr.idx=scr.events.findIndex(e=>+new Date(e.t)>=tt)
-  if(scr.idx<0)scr.idx=scr.events.length
-  scrTime.textContent=new Date(tt).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
+  scr.cursor=tt
+  scr.idx=scr.events.findIndex(e=>+new Date(e.t)>tt); if(scr.idx<0)scr.idx=scr.events.length
+  applySnapshotAt(tt)
+  scrTime.textContent=scrClock(tt)
 }
 function scrPlay(){
   if(!scr.events.length)return
@@ -551,8 +589,8 @@ function init(data){
     .nodeThreeObject(nodeSprite).nodeThreeObjectExtend(false)
     .nodeVal('val')
     .nodeLabel(n=>`<div style="color:${colorOf(n.cluster)};font-family:'Azeret Mono',monospace;font-size:12px;background:rgba(10,8,6,.92);padding:7px 11px;border-radius:6px;line-height:1.5;border:1px solid rgba(237,228,211,.14)"><div>${n.name}</div><div style="opacity:.5;font-size:9px;letter-spacing:.14em;margin-top:3px">${n.cluster} · ${n.status}</div></div>`)
-    .linkColor(l=>l.kind==='comm'?'rgba(232,162,37,.22)':(l.cross?'rgba(232,162,37,.12)':'rgba(237,228,211,.06)'))
-    .linkWidth(l=>l.kind==='comm'?Math.min(0.4+Math.log2((l.weight||1)+1)*0.35,2.4):0.5).linkOpacity(.5)
+    .linkColor(linkColorFn)
+    .linkWidth(linkWidthFn).linkOpacity(1)
     .linkDirectionalParticles(0).linkDirectionalParticleWidth(2.2).linkDirectionalParticleSpeed(.01)
     .linkDirectionalParticleColor(l=> l.__pcolor || 'rgba(232,162,37,.8)')
     .enableNodeDrag(false)
@@ -580,7 +618,7 @@ function init(data){
   const key=new THREE.PointLight(0xffeedd,1.5,1200);key.position.set(200,150,100);scene.add(key)
   scene.add(new THREE.AmbientLight(0x403a30,0.7))
 
-  window.__brain={Graph,DATA,focusOn,clearFocus,pulseLink,get focusId(){return focusId},get pulses(){return activePulses}} // debug handle
+  window.__brain={Graph,DATA,focusOn,clearFocus,pulseLink,get focusId(){return focusId},get pulses(){return activePulses},get scr(){return scr},applySnapshotAt} // debug handle
   renderLegend()
   const st=data.stats
   document.getElementById('subtitle').innerHTML=`<b>${st.agents}</b> agents · <b>${st.repos}</b> repos · <b>${st.clients}</b> clients · <b>${st.live}</b> live · <b>${st.commEdges||0}</b> comm-edges · <b>${st.msgs24h||0}</b> msgs/24h`
