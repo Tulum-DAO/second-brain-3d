@@ -432,7 +432,7 @@ function pulseLink(s,t,type){
   // HTML label that rides with the arrowhead
   const label=document.createElement('div'); label.className='plabel'
   label.textContent=type||'msg'; label.style.color=pulseColor(type); labelsEl.appendChild(label)
-  activePulses.push({head,glow,embers,label,a,b,t:0,dur:1600+Math.random()*300,col,arrived:false,toId:t})
+  activePulses.push({head,glow,embers,label,a,b,t:0,dur:2400+Math.random()*400,col,arrived:false,toId:t})
 }
 function animFlashes(now){
   // node flashes
@@ -490,6 +490,12 @@ function animFlashes(now){
   let anyAct=false
   for(const l of DATA.links){ if(l.__act){ l.__act=Math.max(0,l.__act-dt/1600); anyAct=true } }
   if(anyAct && now-(animFlashes._lastLink||0)>70){ reapplyLinks(); animFlashes._lastLink=now }
+  // CRITICAL: after the force sim cools, ForceGraph throttles its render loop to a few fps,
+  // so our per-frame sprite moves would only paint occasionally (comet appears to teleport).
+  // While anything is animating, force a full-rate render every frame ourselves.
+  if(Graph && (activePulses.length || flashing.size || anyAct)){
+    try{ Graph.renderer().render(Graph.scene(), Graph.camera()) }catch(e){}
+  }
   requestAnimationFrame(animFlashes)
 }
 
