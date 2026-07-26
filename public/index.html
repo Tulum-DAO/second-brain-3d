@@ -283,7 +283,7 @@ function linkColorFn(l){
 }
 function linkWidthFn(l){
   const base=l.kind==='comm'?Math.min(0.4+Math.log2((l.weight||1)+1)*0.35,2.4):0.5
-  return base + (l.__act||0)*5   // active edges swell noticeably
+  return base + (l.__act||0)*1.8   // subtle swell; the comet is the primary motion cue
 }
 function reapplyLinks(){ if(Graph) Graph.linkColor(linkColorFn).linkWidth(linkWidthFn) }
 function refreshLinks(){ reapplyLinks() }
@@ -393,30 +393,25 @@ function pulseTexture(){
   x.fillStyle=g;x.fillRect(0,0,32,32)
   pulseTex=new THREE.CanvasTexture(cv);return pulseTex
 }
-const activePulses=[] // {head,trail,a,b,t,dur,col}
-const TRAIL_PTS=18   // vertices in the comet/edge-fill polyline
-function makeTrail(){
-  const geo=new THREE.BufferGeometry()
-  geo.setAttribute('position',new THREE.BufferAttribute(new Float32Array(TRAIL_PTS*3),3))
-  geo.setAttribute('color',new THREE.BufferAttribute(new Float32Array(TRAIL_PTS*3),3))
-  const mat=new THREE.LineBasicMaterial({vertexColors:true,transparent:true,opacity:1,
-    blending:THREE.AdditiveBlending,depthWrite:false})
-  return new THREE.Line(geo,mat)
-}
+const activePulses=[] // {sprites,a,b,t,dur,col}
+const TAIL_N=12          // ember sprites forming the tapering tail (plus the head = index 0)
+const HEAD_SIZE=16, TAIL_FRAC=0.30  // head sprite size; tail length as fraction of edge
 function pulseLink(s,t,type){
   ensureCommLink(s,t) // keep the static edge present for context + click-to-inspect
   const link=commFor(s,t); if(link) link.__act=1   // light the edge (heat)
   const a=byId.get(s), b=byId.get(t); if(!a||!b||!Graph)return
   const col=new THREE.Color(pulseColor(type))
-  // bright moving head (the packet)
-  const mat=new THREE.SpriteMaterial({map:pulseTexture(),color:col,transparent:true,
-    opacity:1,depthWrite:false,blending:THREE.AdditiveBlending})
-  const head=new THREE.Sprite(mat); head.scale.set(11,11,1)
-  head.position.set(a.x||0,a.y||0,a.z||0)
-  // comet trail = directional edge-fill: lights the traversed part of the edge, bright at head
-  const trail=makeTrail()
-  Graph.scene().add(trail); Graph.scene().add(head)
-  activePulses.push({head,trail,a,b,t:0,dur:1400+Math.random()*400,col})
+  // a comet = a bright head sprite + a chain of shrinking, fading ember sprites behind it.
+  // (a Line can't taper width, so it just looked like the edge brightening — sprites give real shape.)
+  const sprites=[]
+  for(let j=0;j<=TAIL_N;j++){
+    const m=new THREE.SpriteMaterial({map:pulseTexture(),color:col,transparent:true,
+      opacity:0,depthWrite:false,blending:THREE.AdditiveBlending})
+    const sp=new THREE.Sprite(m)
+    sp.position.set(a.x||0,a.y||0,a.z||0)
+    Graph.scene().add(sp); sprites.push(sp)
+  }
+  activePulses.push({sprites,a,b,t:0,dur:1500+Math.random()*400,col})
 }
 function animFlashes(now){
   // node flashes
@@ -424,38 +419,25 @@ function animFlashes(now){
     const n=byId.get(id); if(n&&n.__obj){const s=n.__s*(1+v);n.__obj.scale.set(s,s,1)}
     const nv=v-0.045; if(nv<=0){flashing.delete(id);if(n&&n.__obj)n.__obj.scale.set(n.__s,n.__s,1)}else flashing.set(id,nv)
   }
-  // traveling pulses: comet head + directional edge-fill trail
+  // traveling pulses: comet = bright head + tapering chain of ember sprites
   const dt=animFlashes._last?now-animFlashes._last:16; animFlashes._last=now
   for(let i=activePulses.length-1;i>=0;i--){
     const p=activePulses[i]; p.t+=dt
     const f=p.t/p.dur
-    if(f>=1){ Graph.scene().remove(p.head); Graph.scene().remove(p.trail)
-      p.head.material.dispose(); p.trail.geometry.dispose(); p.trail.material.dispose()
+    if(f>=1){ for(const sp of p.sprites){ Graph.scene().remove(sp); sp.material.dispose() }
       activePulses.splice(i,1); continue }
     const e=f<.5?2*f*f:1-Math.pow(-2*f+2,2)/2 // easeInOut head position along edge
     const ax=p.a.x||0,ay=p.a.y||0,az=p.a.z||0, bx=p.b.x||0,by=p.b.y||0,bz=p.b.z||0
-    const hx=ax+(bx-ax)*e, hy=ay+(by-ay)*e, hz=az+(bz-az)*e
-    // head
-    p.head.position.set(hx,hy,hz)
-    const sc=11*(1+Math.sin(f*Math.PI)*0.6); p.head.scale.set(sc,sc,1)
-    p.head.material.opacity=Math.min(1,Math.sin(f*Math.PI)*1.6)
-    // trail: sample from source(a) up to head(e). j=0 at a (faded), j=last at head (bright)
-    // -> the edge visibly FILLS from sender toward recipient, brightest at the moving head.
-    const pos=p.trail.geometry.attributes.position.array
-    const col=p.trail.geometry.attributes.color.array
-    const gFade=Math.sin(f*Math.PI) // whole comet fades in/out over its life
-    const TAIL=0.34 // comet length as a fraction of the full edge
-    for(let j=0;j<TRAIL_PTS;j++){
-      const u=j/(TRAIL_PTS-1)                 // 0..1 back-to-front
-      const frac=Math.max(0,e-TAIL*(1-u))     // spans [e-TAIL, e], clamped at source
-      pos[j*3]  =ax+(bx-ax)*frac
-      pos[j*3+1]=ay+(by-ay)*frac
-      pos[j*3+2]=az+(bz-az)*frac
-      const w=Math.pow(u,1.7)*gFade           // bright at head, fades toward tail (black=invisible additive)
-      col[j*3]  =p.col.r*w; col[j*3+1]=p.col.g*w; col[j*3+2]=p.col.b*w
+    const gFade=Math.min(1,Math.sin(f*Math.PI)*1.5) // whole comet fades in/out over its life
+    for(let j=0;j<p.sprites.length;j++){
+      const sp=p.sprites[j]
+      const u=j/TAIL_N                          // 0 = head, 1 = tail end
+      const frac=Math.max(0,e-TAIL_FRAC*u)      // each ember trails behind the head along the edge
+      sp.position.set(ax+(bx-ax)*frac, ay+(by-ay)*frac, az+(bz-az)*frac)
+      const taper=1-u                            // 1 at head -> 0 at tail
+      sp.scale.setScalar((3 + HEAD_SIZE*taper*taper)*(1+ (j===0?Math.sin(f*Math.PI)*0.4:0)))
+      sp.material.opacity=gFade*Math.pow(taper,1.3)*(j===0?1:0.85)
     }
-    p.trail.geometry.attributes.position.needsUpdate=true
-    p.trail.geometry.attributes.color.needsUpdate=true
   }
   // edge heat decay: fade each active edge over ~1.6s; throttled re-apply so the glow renders
   let anyAct=false
