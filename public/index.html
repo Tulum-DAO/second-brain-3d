@@ -19,6 +19,11 @@
   html,body{margin:0;height:100%;background:var(--bg);overflow:hidden;color:var(--cream);
     font-family:'Azeret Mono',ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-font-smoothing:antialiased}
   #brain-graph{position:fixed;inset:0;z-index:0}
+  #pulse-labels{position:fixed;inset:0;z-index:6;pointer-events:none}
+  .plabel{position:absolute;transform:translate(-50%,-140%);font-family:'Azeret Mono',monospace;
+    font-size:9px;letter-spacing:.12em;text-transform:uppercase;white-space:nowrap;
+    padding:2px 6px;border-radius:4px;background:rgba(10,8,6,.82);border:1px solid rgba(237,228,211,.14);
+    text-shadow:0 0 6px currentColor;will-change:transform,left,top}
 
   /* retro overlays */
   .fx{position:fixed;inset:0;pointer-events:none;z-index:5}
@@ -142,6 +147,7 @@
 </head>
 <body>
 <div id="brain-graph"></div>
+<div id="pulse-labels"></div>
 
 <div class="fx grain"></div>
 <div class="fx scanlines"></div>
@@ -393,25 +399,40 @@ function pulseTexture(){
   x.fillStyle=g;x.fillRect(0,0,32,32)
   pulseTex=new THREE.CanvasTexture(cv);return pulseTex
 }
-const activePulses=[] // {sprites,a,b,t,dur,col}
-const TAIL_N=12          // ember sprites forming the tapering tail (plus the head = index 0)
-const HEAD_SIZE=16, TAIL_FRAC=0.30  // head sprite size; tail length as fraction of edge
+const activePulses=[] // {head,glow,embers,label,a,b,t,dur,col,quat,arrived}
+const TAIL_N=9           // ember sprites forming the tapering tail
+const TAIL_FRAC=0.28     // tail length as a fraction of the edge
+const labelsEl=document.getElementById('pulse-labels')
+const coneGeo=new THREE.ConeGeometry(4.4,15,10)   // shared arrowhead geometry (points +Y)
+const UP=new THREE.Vector3(0,1,0)
 function pulseLink(s,t,type){
   ensureCommLink(s,t) // keep the static edge present for context + click-to-inspect
   const link=commFor(s,t); if(link) link.__act=1   // light the edge (heat)
   const a=byId.get(s), b=byId.get(t); if(!a||!b||!Graph)return
   const col=new THREE.Color(pulseColor(type))
-  // a comet = a bright head sprite + a chain of shrinking, fading ember sprites behind it.
-  // (a Line can't taper width, so it just looked like the edge brightening — sprites give real shape.)
-  const sprites=[]
-  for(let j=0;j<=TAIL_N;j++){
-    const m=new THREE.SpriteMaterial({map:pulseTexture(),color:col,transparent:true,
-      opacity:0,depthWrite:false,blending:THREE.AdditiveBlending})
-    const sp=new THREE.Sprite(m)
-    sp.position.set(a.x||0,a.y||0,a.z||0)
-    Graph.scene().add(sp); sprites.push(sp)
+  flashNode(s,1.4)                                  // SENDER glows the instant the message leaves
+  // direction of travel -> orient the cone arrowhead to point at the receiver
+  const dir=new THREE.Vector3((b.x||0)-(a.x||0),(b.y||0)-(a.y||0),(b.z||0)-(a.z||0)).normalize()
+  const quat=new THREE.Quaternion().setFromUnitVectors(UP,dir)
+  // arrowhead (a real 3D shape that moves + points where the message is going)
+  const head=new THREE.Mesh(coneGeo,new THREE.MeshBasicMaterial({color:col,transparent:true,opacity:0,
+    blending:THREE.AdditiveBlending,depthWrite:false}))
+  head.quaternion.copy(quat)
+  // bright glow core co-located with the arrowhead
+  const glow=new THREE.Sprite(new THREE.SpriteMaterial({map:pulseTexture(),color:col,transparent:true,
+    opacity:0,depthWrite:false,blending:THREE.AdditiveBlending})); glow.scale.setScalar(14)
+  // tapering ember tail
+  const embers=[]
+  for(let j=0;j<TAIL_N;j++){
+    const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:pulseTexture(),color:col,transparent:true,
+      opacity:0,depthWrite:false,blending:THREE.AdditiveBlending}))
+    Graph.scene().add(sp); embers.push(sp)
   }
-  activePulses.push({sprites,a,b,t:0,dur:1500+Math.random()*400,col})
+  Graph.scene().add(glow); Graph.scene().add(head)
+  // HTML label that rides with the arrowhead
+  const label=document.createElement('div'); label.className='plabel'
+  label.textContent=type||'msg'; label.style.color=pulseColor(type); labelsEl.appendChild(label)
+  activePulses.push({head,glow,embers,label,a,b,t:0,dur:1600+Math.random()*300,col,arrived:false,toId:t})
 }
 function animFlashes(now){
   // node flashes
@@ -419,24 +440,50 @@ function animFlashes(now){
     const n=byId.get(id); if(n&&n.__obj){const s=n.__s*(1+v);n.__obj.scale.set(s,s,1)}
     const nv=v-0.045; if(nv<=0){flashing.delete(id);if(n&&n.__obj)n.__obj.scale.set(n.__s,n.__s,1)}else flashing.set(id,nv)
   }
-  // traveling pulses: comet = bright head + tapering chain of ember sprites
+  // traveling pulses: arrowhead + glow core + ember tail + following label
   const dt=animFlashes._last?now-animFlashes._last:16; animFlashes._last=now
+  const cam=Graph&&Graph.camera(), W=el.clientWidth, H=el.clientHeight
   for(let i=activePulses.length-1;i>=0;i--){
     const p=activePulses[i]; p.t+=dt
     const f=p.t/p.dur
-    if(f>=1){ for(const sp of p.sprites){ Graph.scene().remove(sp); sp.material.dispose() }
-      activePulses.splice(i,1); continue }
+    if(f>=1){
+      Graph.scene().remove(p.head); Graph.scene().remove(p.glow)
+      p.head.material.dispose(); p.glow.material.dispose()
+      for(const sp of p.embers){ Graph.scene().remove(sp); sp.material.dispose() }
+      if(p.label.parentNode) p.label.remove()
+      activePulses.splice(i,1); continue
+    }
     const e=f<.5?2*f*f:1-Math.pow(-2*f+2,2)/2 // easeInOut head position along edge
     const ax=p.a.x||0,ay=p.a.y||0,az=p.a.z||0, bx=p.b.x||0,by=p.b.y||0,bz=p.b.z||0
-    const gFade=Math.min(1,Math.sin(f*Math.PI)*1.5) // whole comet fades in/out over its life
-    for(let j=0;j<p.sprites.length;j++){
-      const sp=p.sprites[j]
-      const u=j/TAIL_N                          // 0 = head, 1 = tail end
-      const frac=Math.max(0,e-TAIL_FRAC*u)      // each ember trails behind the head along the edge
+    const hx=ax+(bx-ax)*e, hy=ay+(by-ay)*e, hz=az+(bz-az)*e
+    const gFade=Math.min(1,Math.sin(f*Math.PI)*1.6) // fade in/out over life
+    // RECEIVER glows the instant the message lands
+    if(!p.arrived && e>=0.985){ p.arrived=true; flashNode(p.toId,1.6) }
+    // arrowhead
+    p.head.position.set(hx,hy,hz)
+    p.head.material.opacity=gFade
+    const hs=1+Math.sin(f*Math.PI)*0.3; p.head.scale.setScalar(hs)
+    // glow core
+    p.glow.position.set(hx,hy,hz)
+    p.glow.material.opacity=gFade*0.9
+    p.glow.scale.setScalar(10+Math.sin(f*Math.PI)*6)
+    // ember tail (behind the head, toward sender)
+    for(let j=0;j<p.embers.length;j++){
+      const sp=p.embers[j]
+      const u=(j+1)/TAIL_N                       // >0, trailing behind head
+      const frac=Math.max(0,e-TAIL_FRAC*u)
       sp.position.set(ax+(bx-ax)*frac, ay+(by-ay)*frac, az+(bz-az)*frac)
-      const taper=1-u                            // 1 at head -> 0 at tail
-      sp.scale.setScalar((3 + HEAD_SIZE*taper*taper)*(1+ (j===0?Math.sin(f*Math.PI)*0.4:0)))
-      sp.material.opacity=gFade*Math.pow(taper,1.3)*(j===0?1:0.85)
+      const taper=1-u
+      sp.scale.setScalar(3+9*taper*taper)
+      sp.material.opacity=gFade*Math.pow(taper,1.4)*0.8
+    }
+    // label follows the arrowhead (project 3D -> screen)
+    if(cam){
+      const v=new THREE.Vector3(hx,hy,hz).project(cam)
+      if(v.z<1){ p.label.style.display='block'
+        p.label.style.left=((v.x*0.5+0.5)*W)+'px'; p.label.style.top=((-v.y*0.5+0.5)*H)+'px'
+        p.label.style.opacity=gFade
+      } else p.label.style.display='none'
     }
   }
   // edge heat decay: fade each active edge over ~1.6s; throttled re-apply so the glow renders
@@ -557,7 +604,7 @@ function scrPlay(){
     const dt=now-last; last=now
     scr.cursor+=dt/REPLAY_MS*span
     while(scr.idx<scr.events.length && +new Date(scr.events[scr.idx].t)<=scr.cursor){
-      const e=scr.events[scr.idx]; pulseLink(e.from,e.to,e.type); flashNode(e.from,1.0); flashNode(e.to,1.0)
+      const e=scr.events[scr.idx]; pulseLink(e.from,e.to,e.type) // pulseLink sequences sender/receiver glow
       ticker(`${e.fromName} → ${e.toName} · ${e.type||'msg'}`)
       scr.idx++
     }
@@ -651,7 +698,7 @@ function connectWS(){
     const m=JSON.parse(ev.data)
     if(m.type==='init'){ if(window.__ver&&m.version&&m.version!==window.__ver){location.reload();return} window.__ver=m.version; if(!Graph)init(m.graph); return }
     if(m.type==='reload'){ location.reload(); return }
-    if(m.type==='node.flash'){ flashNode(m.id, m.kind==='commit'?1.8:m.kind==='spawn'?2.0:1.2); return }
+    if(m.type==='node.flash'){ if(m.kind==='message')return; flashNode(m.id, m.kind==='commit'?1.8:m.kind==='spawn'?2.0:1.2); return }
     if(m.type==='node.update'){ const n=byId.get(m.id); if(n){Object.assign(n,m.patch); if(n.__obj){n.__s=baseScale(n);n.__obj.scale.set(n.__s,n.__s,1)}} return }
     if(m.type==='link.pulse'){ if(scr.live)pulseLink(m.source,m.target,m.kind); return }
     if(m.type==='node.add'){ if(!byId.has(m.node.id)){DATA.nodes.push(m.node);byId.set(m.node.id,m.node);Graph.graphData(DATA);renderLegend();flashNode(m.node.id,2)} return }
