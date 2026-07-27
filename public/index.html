@@ -707,7 +707,7 @@ function connectWS(){
     if(m.type==='node.flash'){ if(m.kind==='message')return; flashNode(m.id, m.kind==='commit'?1.8:m.kind==='spawn'?2.0:1.2); return }
     if(m.type==='node.update'){ const n=byId.get(m.id); if(n){Object.assign(n,m.patch); if(n.__obj){n.__s=baseScale(n);n.__obj.scale.set(n.__s,n.__s,1)}} return }
     if(m.type==='link.pulse'){ if(scr.live)pulseLink(m.source,m.target,m.kind); return }
-    if(m.type==='node.add'){ if(!byId.has(m.node.id)){DATA.nodes.push(m.node);byId.set(m.node.id,m.node);Graph.graphData(DATA);renderLegend();flashNode(m.node.id,2)} return }
+    if(m.type==='node.add'){ if(!byId.has(m.node.id)){DATA.nodes.push(m.node);byId.set(m.node.id,m.node);if(m.link)DATA.links.push(m.link);Graph.graphData(DATA);renderLegend();flashNode(m.node.id,2)} return }
     if(m.type==='node.remove'){ if(byId.has(m.id)){DATA.nodes=DATA.nodes.filter(n=>n.id!==m.id);DATA.links=DATA.links.filter(l=>(l.source.id||l.source)!==m.id&&(l.target.id||l.target)!==m.id);byId.delete(m.id);Graph.graphData(DATA);renderLegend()} return }
     if(m.type==='ticker'){ if(scr.live)ticker(m.text); return }
   }

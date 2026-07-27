@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import chokidar from 'chokidar';
-import { buildGraph, liveSessions, resolveActorId, normActor, db, AO, REPOS } from './lib/collect.js';
+import { buildGraph, liveSessions, resolveActorId, normActor, hubSeed, db, AO, REPOS } from './lib/collect.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 7373;
@@ -151,16 +151,32 @@ function ensureActorNode(name) {
   if (id) return id;
   const norm = normActor(name);
   if (!norm || norm === 'unknown') return null;
-  const opId = `ops:${norm}`;
-  if (graph.index.has(opId)) return opId;
   const human = /^shaw|qa-user/.test(norm);
+  // A newly-provisioned agent first appears here (it messages before its state file lands).
+  // If it's a live tmux session it's a real AGENT -> place it IN the agents pillar, next to
+  // its peers, not off in the OPS region. Only non-live, non-human names stay as ops daemons.
+  const isAgent = currentLive.has(norm) && !human;
+  const cluster = isAgent ? 'agents' : 'ops';
+  const nid = isAgent ? `agent:${norm}` : `ops:${norm}`;
+  if (graph.index.has(nid)) return nid;
   const status = currentLive.has(norm) ? 'live' : (human ? 'idle' : 'ember');
-  const node = { id: opId, cluster: 'ops', kind: human ? 'human' : 'daemon', name: norm,
-    val: human ? 12 : 8, status,
-    meta: { role: human ? 'human operator' : 'orchestration daemon', discovered: true } };
-  graph.nodes.push(node); graph.index.set(opId, node);
-  broadcast({ type: 'node.add', node });
-  return opId;
+  // seed at the correct pillar hub so it renders among its cluster immediately
+  const pos = hubSeed(cluster, 70);
+  const node = { id: nid, cluster,
+    kind: isAgent ? 'agent' : (human ? 'human' : 'daemon'), name: norm,
+    val: isAgent ? 8 : (human ? 12 : 8), status, ...pos,
+    meta: { role: isAgent ? 'live tmux session' : (human ? 'human operator' : 'orchestration daemon'),
+      tmux: isAgent ? norm : undefined, discovered: true } };
+  graph.nodes.push(node); graph.index.set(nid, node);
+  // link to its pillar hub so the force layout keeps it snug in the cluster
+  const hubId = `hub:${cluster}`;
+  let hubLink = null;
+  if (graph.index.has(hubId)) {
+    hubLink = { source: hubId, target: nid, kind: 'member' };
+    graph.links.push(hubLink);
+  }
+  broadcast({ type: 'node.add', node, link: hubLink });
+  return nid;
 }
 setInterval(() => {
   const d = db(); if (!d) return;
