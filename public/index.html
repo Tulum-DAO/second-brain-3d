@@ -20,6 +20,13 @@
     font-family:'Azeret Mono',ui-monospace,SFMono-Regular,Menlo,monospace;-webkit-font-smoothing:antialiased}
   #brain-graph{position:fixed;inset:0;z-index:0}
   #pulse-labels{position:fixed;inset:0;z-index:6;pointer-events:none}
+  .orbit-hint{position:fixed;top:80px;left:50%;transform:translateX(-50%);z-index:11;pointer-events:none;
+    font-family:'Azeret Mono',monospace;font-size:10px;letter-spacing:.16em;text-transform:uppercase;
+    padding:5px 12px;border-radius:6px;background:rgba(10,8,6,.85);border:1px solid var(--line);
+    opacity:0;transition:opacity .25s}
+  .orbit-hint.on{opacity:1}
+  .orbit-hint.warn{color:#ef4444;border-color:rgba(239,68,68,.4)}
+  .orbit-hint.ok{color:var(--amber);border-color:rgba(232,162,37,.35)}
   .plabel{position:absolute;transform:translate(-50%,-140%);font-family:'Azeret Mono',monospace;
     font-size:9px;letter-spacing:.12em;text-transform:uppercase;white-space:nowrap;
     padding:2px 6px;border-radius:4px;background:rgba(10,8,6,.82);border:1px solid rgba(237,228,211,.14);
@@ -183,6 +190,7 @@
   <span><span class="k">scroll</span> zoom</span><span class="dot"></span>
   <span><span class="k">click</span> a node</span>
 </div>
+<div class="orbit-hint" id="orbit-hint"></div>
 
 <div class="panel" id="panel"></div>
 <div class="msgpanel" id="msgpanel"></div>
@@ -719,6 +727,44 @@ function init(data){
   })
   addEventListener('keyup',ev=>{ const k=ev.key.toLowerCase(); if(MOVE_KEYS[k]) keyState[k]=false })
   addEventListener('blur',()=>{ keyState={} })            // stop moving if window loses focus
+
+  // ---- orbit gating: you can only orbit AROUND a node that's in view, never empty space ----
+  const orbitHintEl=document.getElementById('orbit-hint')
+  function showOrbitHint(name){
+    clearTimeout(showOrbitHint._t)
+    if(name){ orbitHintEl.textContent='◉ orbiting '+name; orbitHintEl.className='orbit-hint on ok' }
+    else{ orbitHintEl.textContent='✕ no node in view — fly/zoom to a node to orbit'; orbitHintEl.className='orbit-hint on warn' }
+    showOrbitHint._t=setTimeout(()=>{ orbitHintEl.className='orbit-hint' },1600)
+  }
+  // pick the node nearest screen-center that is inside the view frustum (in front + on-screen)
+  function bestInViewNode(){
+    const cam=Graph.camera(); const v=new THREE.Vector3()
+    let best=null, bestScore=Infinity
+    for(const n of DATA.nodes){
+      if(n.x==null) continue
+      v.set(n.x,n.y,n.z).project(cam)
+      if(v.z>=1) continue                       // behind camera / beyond far plane
+      if(Math.abs(v.x)>1||Math.abs(v.y)>1) continue  // off-screen
+      const score=v.x*v.x+v.y*v.y               // distance from screen center in NDC
+      if(score<bestScore){ bestScore=score; best=n }
+    }
+    return best
+  }
+  const canvas=Graph.renderer().domElement
+  canvas.addEventListener('pointerdown',ev=>{
+    if(ev.button!==0) return                    // left-drag = orbit; right/middle = pan/zoom, leave alone
+    c.autoRotate=false
+    const n=bestInViewNode()
+    if(n){                                       // anchor the orbit pivot onto that node
+      c.target.set(n.x,n.y,n.z); c.enableRotate=true; c.update()
+      try{ Graph.renderer().render(Graph.scene(),Graph.camera()) }catch(e){}
+      showOrbitHint(n.name)
+    }else{
+      c.enableRotate=false                       // nothing in view -> can't spin around the void
+      showOrbitHint(null)
+    }
+  },true)
+
   const scene=Graph.scene()
   const key=new THREE.PointLight(0xffeedd,1.5,1200);key.position.set(200,150,100);scene.add(key)
   scene.add(new THREE.AmbientLight(0x403a30,0.7))
