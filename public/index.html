@@ -177,6 +177,8 @@
 </div>
 
 <div class="ui hint">
+  <span><span class="k">WASD</span> fly</span><span class="dot"></span>
+  <span><span class="k">Q/E</span> down/up</span><span class="dot"></span>
   <span><span class="k">drag</span> orbit</span><span class="dot"></span>
   <span><span class="k">scroll</span> zoom</span><span class="dot"></span>
   <span><span class="k">click</span> a node</span>
@@ -240,6 +242,7 @@ const el=document.getElementById('brain-graph')
 const rv=document.getElementById('rv'), rp=document.getElementById('rp')
 const panel=document.getElementById('panel')
 let Graph=null, selected=null, focusId=null, neighborSet=null, DATA={nodes:[],links:[]}, byId=new Map()
+let keyState={}   // WASDQE free-fly key state
 const flashing=new Map() // id -> intensity
 const commLinks=new Map() // "s|t" -> link obj
 
@@ -490,13 +493,37 @@ function animFlashes(now){
   let anyAct=false
   for(const l of DATA.links){ if(l.__act){ l.__act=Math.max(0,l.__act-dt/1600); anyAct=true } }
   if(anyAct && now-(animFlashes._lastLink||0)>70){ reapplyLinks(); animFlashes._lastLink=now }
+  // WASDQE free-fly movement
+  const flying=flyStep(dt)
   // CRITICAL: after the force sim cools, ForceGraph throttles its render loop to a few fps,
   // so our per-frame sprite moves would only paint occasionally (comet appears to teleport).
-  // While anything is animating, force a full-rate render every frame ourselves.
-  if(Graph && (activePulses.length || flashing.size || anyAct)){
+  // While anything is animating (pulses/flashes/heat/flying), force a full-rate render.
+  if(Graph && (activePulses.length || flashing.size || anyAct || flying)){
     try{ Graph.renderer().render(Graph.scene(), Graph.camera()) }catch(e){}
   }
   requestAnimationFrame(animFlashes)
+}
+
+// translate camera + orbit target together along the view basis; returns true if moved
+const FLY_SPEED=620 // world-units per second
+function flyStep(dt){
+  if(!Graph) return false
+  const c=window.__controls; if(!c) return false
+  const kx=(keyState.d?1:0)-(keyState.a?1:0)  // right/left
+  const ky=(keyState.e?1:0)-(keyState.q?1:0)  // up/down
+  const kz=(keyState.w?1:0)-(keyState.s?1:0)  // forward/back
+  if(!kx&&!ky&&!kz) return false
+  const cam=Graph.camera(), tgt=c.target
+  const fwd=new THREE.Vector3().subVectors(tgt,cam.position).normalize()
+  const up=new THREE.Vector3(0,1,0)
+  const right=new THREE.Vector3().crossVectors(fwd,up).normalize()
+  const move=new THREE.Vector3()
+    .addScaledVector(fwd,kz).addScaledVector(right,kx).addScaledVector(up,ky)
+  if(move.lengthSq()===0) return false
+  move.normalize().multiplyScalar(FLY_SPEED*Math.min(dt,50)/1000) // clamp dt so a stutter can't teleport
+  cam.position.add(move); tgt.add(move)
+  c.update()
+  return true
 }
 
 function indexCommLinks(){ // register comm edges from the snapshot so pulses reuse them
@@ -679,7 +706,19 @@ function init(data){
     .distance(l=> l.kind==='member' ? 34 : l.kind==='comm' ? 95 : 55)
     .strength(l=> l.kind==='member' ? 0.75 : l.kind==='comm' ? 0.04 : 0.2)
 
-  const c=Graph.controls();c.maxDistance=2000;c.minDistance=40;c.autoRotate=!EMBED;c.autoRotateSpeed=0.35
+  const c=Graph.controls();c.maxDistance=6000;c.minDistance=10;c.autoRotate=!EMBED;c.autoRotateSpeed=0.35
+  window.__controls=c
+  // ---- WASDQE free-fly: translate BOTH camera and orbit target together, so click-drag
+  // keeps orbiting a point in front of you (not a fixed origin) as you move through space. ----
+  const MOVE_KEYS={w:1,a:1,s:1,d:1,q:1,e:1}
+  keyState={}
+  addEventListener('keydown',ev=>{
+    if(document.activeElement===searchEl) return          // don't hijack search typing
+    const k=ev.key.toLowerCase()
+    if(MOVE_KEYS[k]){ keyState[k]=true; c.autoRotate=false; ev.preventDefault() }
+  })
+  addEventListener('keyup',ev=>{ const k=ev.key.toLowerCase(); if(MOVE_KEYS[k]) keyState[k]=false })
+  addEventListener('blur',()=>{ keyState={} })            // stop moving if window loses focus
   const scene=Graph.scene()
   const key=new THREE.PointLight(0xffeedd,1.5,1200);key.position.set(200,150,100);scene.add(key)
   scene.add(new THREE.AmbientLight(0x403a30,0.7))
