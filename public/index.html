@@ -294,12 +294,14 @@ function linkColorFn(l){
       const r=(232+(255-232)*act)|0, g=(162+(255-162)*act)|0, bl=(37+(235-37)*act)|0
       return `rgba(${r},${g},${bl},${(0.30+act*0.68).toFixed(3)})`
     }
-    return (focusId&&(a===focusId||b===focusId))?'rgba(232,162,37,.75)':'rgba(232,162,37,.22)'
+    return (focusId&&(a===focusId||b===focusId))?'rgba(232,162,37,.75)':'rgba(232,162,37,.32)'
   }
-  return l.cross?'rgba(232,162,37,.12)':'rgba(237,228,211,.08)'
+  return l.cross?'rgba(232,162,37,.26)':'rgba(237,228,211,.24)'
 }
 function linkWidthFn(l){
-  const base=l.kind==='comm'?Math.min(0.4+Math.log2((l.weight||1)+1)*0.35,2.4):0.5
+  // links are CylinderGeometry meshes (any width>0), so width is in WORLD units, not px.
+  // over a ~950u graph, sub-unit widths are invisible — hence the visible skeleton floor below.
+  const base=l.kind==='comm'?Math.min(0.8+Math.log2((l.weight||1)+1)*0.5,3.2):(l.kind==='member'?1.1:0.9)
   return base + (l.__act||0)*1.8   // subtle swell; the comet is the primary motion cue
 }
 function reapplyLinks(){ if(Graph) Graph.linkColor(linkColorFn).linkWidth(linkWidthFn) }
