@@ -666,6 +666,12 @@ scrWin.onchange=async()=>{ await loadHistory(+scrWin.value); if(!scr.live)scrSet
 
 // ---------- settle: guarantee sprites sit on node coords + frame the whole constellation ----------
 function syncSprites(){ for(const n of DATA.nodes) if(n.__obj) n.__obj.position.set(n.x||0,n.y||0,n.z||0) }
+// Freeze the constellation once it has settled: pin every node at its settled position
+// (fx/fy/fz). Any later Graph.graphData() call (replay adds comm edges, live spawns/removals)
+// reheats the force sim to alpha=1 — without pins, the ~518 unpinned nodes churn and drift
+// into a single ball. Pinning makes those graphData() calls layout no-ops. Hubs come pre-pinned.
+function pinNode(n){ if(n&&n.x!=null){ n.fx=n.x; n.fy=n.y; n.fz=n.z } }
+function pinAll(){ for(const n of DATA.nodes) pinNode(n) }
 function frameCamera(){
   const N=DATA.nodes; if(!N.length)return
   let cx=0,cy=0,cz=0; for(const n of N){cx+=n.x||0;cy+=n.y||0;cz+=n.z||0}
@@ -678,7 +684,7 @@ function frameCamera(){
 function settleView(){
   syncSprites()
   if(window.__settled)return
-  window.__settled=1; frameCamera()
+  window.__settled=1; pinAll(); frameCamera()   // freeze layout so replay/spawn graphData() can't reheat it into a ball
   document.getElementById('loader').classList.add('gone')
 }
 
@@ -794,7 +800,7 @@ function connectWS(){
     if(m.type==='node.flash'){ if(m.kind==='message')return; flashNode(m.id, m.kind==='commit'?1.8:m.kind==='spawn'?2.0:1.2); return }
     if(m.type==='node.update'){ const n=byId.get(m.id); if(n){Object.assign(n,m.patch); if(n.__obj){n.__s=baseScale(n);n.__obj.scale.set(n.__s,n.__s,1)}} return }
     if(m.type==='link.pulse'){ if(scr.live)pulseLink(m.source,m.target,m.kind); return }
-    if(m.type==='node.add'){ if(!byId.has(m.node.id)){DATA.nodes.push(m.node);byId.set(m.node.id,m.node);if(m.link)DATA.links.push(m.link);Graph.graphData(DATA);renderLegend();flashNode(m.node.id,2)} return }
+    if(m.type==='node.add'){ if(!byId.has(m.node.id)){DATA.nodes.push(m.node);byId.set(m.node.id,m.node);if(m.link)DATA.links.push(m.link);Graph.graphData(DATA);renderLegend();flashNode(m.node.id,2);setTimeout(()=>pinNode(byId.get(m.node.id)),1600)} return }
     if(m.type==='node.remove'){ if(byId.has(m.id)){DATA.nodes=DATA.nodes.filter(n=>n.id!==m.id);DATA.links=DATA.links.filter(l=>(l.source.id||l.source)!==m.id&&(l.target.id||l.target)!==m.id);byId.delete(m.id);Graph.graphData(DATA);renderLegend()} return }
     if(m.type==='ticker'){ if(scr.live)ticker(m.text); return }
   }
