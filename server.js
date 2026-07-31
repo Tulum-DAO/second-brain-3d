@@ -249,8 +249,14 @@ function reconcile() {
     const a = graph.index.get(id), b = next.index.get(id);
     if (a.status !== b.status) updateNode(id, { status: b.status });
   }
+  // Refresh links from the fresh build. Previously graph.links was frozen at startup, so
+  // when a node was removed here its comm/member edges stayed behind as DANGLING references
+  // to a non-existent node — and d3-force throws on a missing link endpoint, which aborts the
+  // client's entire link force (every connection vanishes). Rebuilding keeps links consistent
+  // with nodes and lets new message topology appear. Guard against any residual dangling edge.
+  graph.links = next.links.filter(l => next.index.has(l.source) && next.index.has(l.target));
   graph.stats = next.stats;
-  console.log('[brain] reconciled:', graph.nodes.length, 'nodes');
+  console.log('[brain] reconciled:', graph.nodes.length, 'nodes,', graph.links.length, 'links');
 }
 
 // live client hot-reload: editing the client bumps VERSION + pushes reload to open tabs
