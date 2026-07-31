@@ -710,7 +710,12 @@ function settleView(){
 
 // ---------- init graph ----------
 function init(data){
-  DATA=data; byId=new Map(DATA.nodes.map(n=>[n.id,n])); indexCommLinks()
+  DATA=data; byId=new Map(DATA.nodes.map(n=>[n.id,n]))
+  // Drop any link whose source/target node is missing: d3-force THROWS on a dangling
+  // endpoint, which aborts the whole link force and makes EVERY connection disappear
+  // (nodes still render). Stale comm edges to removed agents are the usual culprit.
+  DATA.links=DATA.links.filter(l=>byId.has(l.source.id||l.source)&&byId.has(l.target.id||l.target))
+  indexCommLinks()
   Graph=ForceGraph3D()(el)
     .graphData(DATA)
     .width(el.clientWidth).height(el.clientHeight)
