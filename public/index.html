@@ -541,9 +541,12 @@ function flyStep(dt){
   const kz=(keyState.w?1:0)-(keyState.s?1:0)  // forward/back
   if(!kx&&!ky&&!kz) return false
   const cam=Graph.camera(), tgt=c.target
-  const fwd=new THREE.Vector3().subVectors(tgt,cam.position).normalize()
-  const up=new THREE.Vector3(0,1,0)
-  const right=new THREE.Vector3().crossVectors(fwd,up).normalize()
+  cam.updateMatrixWorld()
+  // basis from the CAMERA's own world matrix, so movement is always relative to what you see:
+  // d=screen-right, e=screen-up, w=into-screen — correct at any orientation, even rolled/upside-down.
+  const right=new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld,0)          // camera +X
+  const up=new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld,1)             // camera +Y
+  const fwd=new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld,2).negate()   // camera -Z (look dir)
   const move=new THREE.Vector3()
     .addScaledVector(fwd,kz).addScaledVector(right,kx).addScaledVector(up,ky)
   if(move.lengthSq()===0) return false
