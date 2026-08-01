@@ -254,6 +254,8 @@ let keyState={}   // WASDQE free-fly key state
 const flashing=new Map() // id -> intensity
 const commLinks=new Map() // "s|t" -> link obj
 let spriteDirtyUntil=0    // re-anchor sprites in animFlashes until this time (see reapplyLinks)
+let hoverNode=null, hoverLink=null   // what the cursor is over — drives the click-target highlight
+const HOVER_SCALE=1.4     // how much a hovered node grows, so it's an obvious click target
 
 function nodeSprite(node){
   const m=new THREE.SpriteMaterial({map:clusterTex[node.cluster]||clusterTex.state,
@@ -265,6 +267,10 @@ function nodeSprite(node){
 }
 // opacity a node should have under the current focus/cluster selection
 function opacityFor(node){
+  // hover wins over everything: the node under the cursor (or an endpoint of the hovered
+  // edge) goes fully bright so you can see exactly what you're about to click.
+  if(node===hoverNode) return 1
+  if(hoverLink && (node.id===(hoverLink.source.id||hoverLink.source)||node.id===(hoverLink.target.id||hoverLink.target))) return 1
   if(focusId&&neighborSet) return neighborSet.has(node.id) ? (node.id===focusId?1:.95) : DIM
   if(selected) return node.cluster===selected ? .96 : DIM
   return FULL
@@ -285,6 +291,7 @@ const clusterOf = end => (typeof end==='object'&&end) ? end.cluster : (byId.get(
 
 // unified link styling — incorporates focus/select dimming AND time-activity heat (__act)
 function linkColorFn(l){
+  if(l===hoverLink) return 'rgba(255,241,204,.98)'   // hovered edge: bright, wins over all dimming
   const a=l.source.id||l.source, b=l.target.id||l.target
   const act=l.__act||0
   // dimming context
@@ -303,7 +310,8 @@ function linkWidthFn(l){
   // links are CylinderGeometry meshes (any width>0), so width is in WORLD units, not px.
   // over a ~950u graph, sub-unit widths are invisible — hence the visible skeleton floor below.
   const base=l.kind==='comm'?Math.min(0.8+Math.log2((l.weight||1)+1)*0.5,3.2):(l.kind==='member'?1.1:0.9)
-  return base + (l.__act||0)*1.8   // subtle swell; the comet is the primary motion cue
+  const w=base + (l.__act||0)*1.8   // subtle swell; the comet is the primary motion cue
+  return l===hoverLink ? w+2.2 : w  // hovered edge swells so it's an obvious click target
 }
 // Setting ANY link accessor makes three-forcegraph re-digest the scene, which resets every
 // node object's position to (0,0,0) and relies on an engine tick to restore it. Our layout is
@@ -461,6 +469,10 @@ function animFlashes(now){
     const n=byId.get(id); if(n&&n.__obj){const s=n.__s*(1+v);n.__obj.scale.set(s,s,1)}
     const nv=v-0.045; if(nv<=0){flashing.delete(id);if(n&&n.__obj)n.__obj.scale.set(n.__s,n.__s,1)}else flashing.set(id,nv)
   }
+  // hovered node: sustain a scale boost so it reads as the click target (flash takes precedence)
+  if(hoverNode&&hoverNode.__obj&&!flashing.has(hoverNode.id)){
+    const s=hoverNode.__s*HOVER_SCALE; hoverNode.__obj.scale.set(s,s,1)
+  }
   // traveling pulses: arrowhead + glow core + ember tail + following label
   const dt=animFlashes._last?now-animFlashes._last:16; animFlashes._last=now
   const cam=Graph&&Graph.camera(), W=el.clientWidth, H=el.clientHeight
@@ -519,7 +531,7 @@ function animFlashes(now){
   // CRITICAL: after the force sim cools, ForceGraph throttles its render loop to a few fps,
   // so our per-frame sprite moves would only paint occasionally (comet appears to teleport).
   // While anything is animating (pulses/flashes/heat/flying) or re-anchoring, force a full-rate render.
-  if(Graph && (activePulses.length || flashing.size || anyAct || flying || spriteDirty)){
+  if(Graph && (activePulses.length || flashing.size || anyAct || flying || spriteDirty || hoverNode || hoverLink)){
     // Re-anchor sprites to their static node coords IMMEDIATELY before painting. Setting any link
     // accessor triggers three-forcegraph's debounced scene digest, which resets node objects to
     // (0,0,0) and expects an engine tick to restore them — but our engine is stopped, so without
@@ -731,11 +743,32 @@ function init(data){
     .warmupTicks(0).cooldownTicks(300).d3AlphaDecay(0.0182).d3VelocityDecay(0.28)
     .onEngineStop(()=>settleView())
     .onNodeHover(n=>{
-      el.style.cursor=n?'pointer':'grab'
+      // restore the previously-hovered node's resting scale (unless it's mid-flash)
+      if(hoverNode&&hoverNode!==n&&hoverNode.__obj&&!flashing.has(hoverNode.id)) hoverNode.__obj.scale.set(hoverNode.__s,hoverNode.__s,1)
+      hoverNode=n
+      applyNodeDim()                              // brighten it (and dim-restore the rest)
+      spriteDirtyUntil=performance.now()+200      // guarantee a render paints the (un)highlight
+      el.style.cursor=(n||hoverLink)?'pointer':'grab'
       if(n){rv.textContent=n.name;rp.textContent=n.cluster;rp.style.color=colorOf(n.cluster);post('brain:hover',{id:n.id,name:n.name,cluster:n.cluster})}
       else if(!selected&&!focusId){rv.textContent='the whole operation';rp.textContent='all pillars';rp.style.color='var(--amber)'}
     })
     .onNodeClick(n=>{ flyTo(n); post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta}) })
+    // hovering an edge brightens+thickens it, lights its two endpoint nodes, and shows a tooltip
+    // naming both agents — so you can tell what you're about to click. reapplyLinks() restyles via
+    // the accessor fns, so this works for every current AND future edge automatically.
+    .onLinkHover(l=>{
+      if(l===hoverLink) return
+      hoverLink=l
+      reapplyLinks()                            // reapplyLinks() also opens the sprite-dirty render window
+      applyNodeDim()                            // light up the two endpoint nodes
+      el.style.cursor=(l||hoverNode)?'pointer':'grab'
+    })
+    .linkLabel(l=>{
+      const a=byId.get(l.source.id||l.source), b=byId.get(l.target.id||l.target)
+      if(!a||!b) return ''
+      const kind=l.kind==='comm'?(l.weight?`${l.weight} message${l.weight===1?'':'s'}`:'messages'):(l.kind==='member'?'member of':'link')
+      return `<div style="font-family:'Azeret Mono',monospace;font-size:12px;background:rgba(10,8,6,.94);padding:8px 12px;border-radius:6px;line-height:1.5;border:1px solid rgba(237,228,211,.16)"><div><span style="color:${colorOf(a.cluster)}">${a.name}</span> <span style="color:var(--amber)">⇄</span> <span style="color:${colorOf(b.cluster)}">${b.name}</span></div><div style="opacity:.55;font-size:9px;letter-spacing:.14em;margin-top:3px;text-transform:uppercase">${kind}</div></div>`
+    })
     .onLinkClick(l=>{ const a=l.source.id||l.source,b=l.target.id||l.target
       if(l.kind==='comm'||l.kind==='member'||l.__new) inspectEdge(a,b) })
     .onBackgroundClick(()=>{ clearFocus(); panel.classList.remove('on'); msgpanel.classList.remove('on'); Graph.zoomToFit(900,80) })
