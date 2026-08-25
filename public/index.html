@@ -184,8 +184,9 @@
 </div>
 
 <div class="ui hint">
-  <span><span class="k">WASD</span> fly</span><span class="dot"></span>
-  <span><span class="k">Q/E</span> down/up</span><span class="dot"></span>
+  <span><span class="k">W/S</span> up/down</span><span class="dot"></span>
+  <span><span class="k">A/D</span> strafe</span><span class="dot"></span>
+  <span><span class="k">E/Q</span> fwd/back</span><span class="dot"></span>
   <span><span class="k">drag</span> orbit</span><span class="dot"></span>
   <span><span class="k">scroll</span> zoom</span><span class="dot"></span>
   <span><span class="k">click</span> a node</span>
@@ -595,14 +596,14 @@ const FLY_SPEED=620 // world-units per second
 function flyStep(dt){
   if(!Graph) return false
   const c=window.__controls; if(!c) return false
-  const kx=(keyState.d?1:0)-(keyState.a?1:0)  // right/left
-  const ky=(keyState.e?1:0)-(keyState.q?1:0)  // up/down
-  const kz=(keyState.w?1:0)-(keyState.s?1:0)  // forward/back
+  const kx=(keyState.d?1:0)-(keyState.a?1:0)  // right/left  (A/D strafe)
+  const ky=(keyState.w?1:0)-(keyState.s?1:0)  // up/down     (W up, S down)
+  const kz=(keyState.e?1:0)-(keyState.q?1:0)  // forward/back (E forward, Q back)
   if(!kx&&!ky&&!kz) return false
   const cam=Graph.camera(), tgt=c.target
   cam.updateMatrixWorld()
   // basis from the CAMERA's own world matrix, so movement is always relative to what you see:
-  // d=screen-right, e=screen-up, w=into-screen — correct at any orientation, even rolled/upside-down.
+  // d=screen-right, w=screen-up, e=into-screen — correct at any orientation, even rolled/upside-down.
   const right=new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld,0)          // camera +X
   const up=new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld,1)             // camera +Y
   const fwd=new THREE.Vector3().setFromMatrixColumn(cam.matrixWorld,2).negate()   // camera -Z (look dir)
