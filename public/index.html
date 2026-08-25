@@ -764,9 +764,9 @@ function frameCamera(){
   let R=1; for(const n of N){const d=Math.hypot((n.x||0)-cx,(n.y||0)-cy,(n.z||0)-cz); if(d>R)R=d}
   const fov=(Graph.camera().fov||50)*Math.PI/180
   const dist=(R/Math.sin(fov/2))*1.15
-  // pillars: head-on down +Z. brain: oblique lateral (down the L-R axis, lifted, angled anterior)
-  // so the recognizable profile reads immediately; unit-length offset keeps the fit distance.
-  if(BRAIN) Graph.cameraPosition({x:cx+dist*0.86,y:cy+dist*0.32,z:cz+dist*0.38},{x:cx,y:cy,z:cz},900)
+  // pillars: head-on down +Z. brain: front-above 3/4 (angled anterior, lifted, off to one side) so
+  // BOTH the lobe profile AND the left/right hemisphere split read at once; unit-length offset.
+  if(BRAIN) Graph.cameraPosition({x:cx+dist*0.52,y:cy+dist*0.55,z:cz+dist*0.66},{x:cx,y:cy,z:cz},900)
   else Graph.cameraPosition({x:cx,y:cy,z:cz+dist},{x:cx,y:cy,z:cz},900)
 }
 function settleView(){
@@ -823,22 +823,37 @@ const LOBE_FRAG=`
     vec3 col=uColor+uColor*f*uRimBoost;
     float a=(uBody+f*uBody*2.0)*uDim;
     gl_FragColor=vec4(col,a); }`
+const LOBE_SHRINK=0.85   // pull each hull toward its own centroid → gaps between lobes read as distinct surfaces
+function makeLobe(points,region){
+  if(points.length<4) return null
+  let geo; try{ geo=new ConvexGeometry(points.map(p=>new THREE.Vector3(p.x,p.y,p.z))) }catch(e){ return null }
+  // shrink toward centroid so neighbouring regions/hemispheres separate instead of interpenetrating
+  const pos=geo.attributes.position; let cx=0,cy=0,cz=0
+  for(let i=0;i<pos.count;i++){ cx+=pos.getX(i); cy+=pos.getY(i); cz+=pos.getZ(i) }
+  cx/=pos.count; cy/=pos.count; cz/=pos.count
+  for(let i=0;i<pos.count;i++){ pos.setXYZ(i, cx+(pos.getX(i)-cx)*LOBE_SHRINK, cy+(pos.getY(i)-cy)*LOBE_SHRINK, cz+(pos.getZ(i)-cz)*LOBE_SHRINK) }
+  pos.needsUpdate=true; geo.computeVertexNormals()
+  const mat=new THREE.ShaderMaterial({
+    uniforms:{ uColor:{value:new THREE.Color(colorOf(region))},
+      uBody:{value:0.12}, uRimPow:{value:2.0}, uRimBoost:{value:1.7}, uDim:{value:1} },
+    vertexShader:LOBE_VERT, fragmentShader:LOBE_FRAG,
+    transparent:true, depthWrite:false, side:THREE.DoubleSide, blending:THREE.NormalBlending })
+  const mesh=new THREE.Mesh(geo,mat); mesh.renderOrder=-2; mesh.userData.region=region
+  return mesh
+}
 async function loadBrainLobes(){
   if(!Graph) return
   try{
     const a=await (await fetch('/api/brain-points')).json()
     const grp=new THREE.Group()
     for(const region in a.regions){
-      const pts=a.regions[region].map(p=>new THREE.Vector3(p.x,p.y,p.z))
-      if(pts.length<4) continue
-      let geo; try{ geo=new ConvexGeometry(pts) }catch(e){ continue }  // hull needs ≥4 non-coplanar pts
-      const mat=new THREE.ShaderMaterial({
-        uniforms:{ uColor:{value:new THREE.Color(colorOf(region))},
-          uBody:{value:0.10}, uRimPow:{value:2.2}, uRimBoost:{value:1.4}, uDim:{value:1} },
-        vertexShader:LOBE_VERT, fragmentShader:LOBE_FRAG,
-        transparent:true, depthWrite:false, side:THREE.DoubleSide, blending:THREE.NormalBlending })
-      const mesh=new THREE.Mesh(geo,mat); mesh.renderOrder=-2; mesh.userData.region=region
-      grp.add(mesh)
+      const all=a.regions[region]
+      // Split each region at the sagittal midline (x = left-right axis) into hemispheres, so the
+      // brain's bilateral structure + the central fissure read. Truly-midline regions (too few
+      // points on one side) stay whole. Two hemisphere hulls also overlap far less than one big one.
+      const L=all.filter(p=>p.x<0), R=all.filter(p=>p.x>=0)
+      const sides=(Math.min(L.length,R.length)>=12) ? [L,R] : [all]
+      for(const side of sides){ const m=makeLobe(side,region); if(m) grp.add(m) }
     }
     Graph.scene().add(grp); window.__lobes=grp
   }catch(e){ console.warn('[brain] lobes failed',e) }
