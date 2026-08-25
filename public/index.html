@@ -213,6 +213,7 @@
 <script type="module">
 import * as THREE from 'three'
 import ForceGraph3D from 'https://esm.sh/3d-force-graph@1.73.4?external=three'
+import { ConvexGeometry } from 'https://esm.sh/three@0.183.2/examples/jsm/geometries/ConvexGeometry.js?external=three'
 
 const EMBED = new URLSearchParams(location.search).get('embed') === '1'
 if (EMBED) document.body.classList.add('embed')
@@ -822,49 +823,25 @@ const LOBE_FRAG=`
     vec3 col=uColor+uColor*f*uRimBoost;
     float a=(uBody+f*uBody*2.0)*uDim;
     gl_FragColor=vec4(col,a); }`
-const LOBE_K=1.4          // ellipsoid semi-axes = K·std along each principal axis (size / overlap control)
-const AGENT_SHRINK=0.66   // pull each region-agent toward its lobe centroid → orbs sit INSIDE the lobe
+const LOBE_SHRINK=0.90    // mild pull toward centroid → some separation without losing the shape
+const AGENT_SHRINK=0.80   // pull each region-agent toward its lobe centroid → orbs sit INSIDE the lobe
 const HEMI_MIN=12         // min points per side to treat a region as bilateral (else it stays midline-whole)
 function centroidOf(pts){ let x=0,y=0,z=0; for(const p of pts){x+=p.x;y+=p.y;z+=p.z} const n=pts.length||1; return {x:x/n,y:y/n,z:z/n} }
-// Jacobi eigen-decomposition of a symmetric 3x3 (packed [c00,c01,c02,c11,c12,c22]) → principal axes.
-function eigenSym3(m){
-  let a=[[m[0],m[1],m[2]],[m[1],m[3],m[4]],[m[2],m[4],m[5]]], V=[[1,0,0],[0,1,0],[0,0,1]]
-  for(let it=0;it<32;it++){
-    let p=0,q=1,mx=Math.abs(a[0][1])
-    if(Math.abs(a[0][2])>mx){mx=Math.abs(a[0][2]);p=0;q=2}
-    if(Math.abs(a[1][2])>mx){mx=Math.abs(a[1][2]);p=1;q=2}
-    if(mx<1e-9) break
-    const phi=0.5*Math.atan2(2*a[p][q], a[q][q]-a[p][p]), c=Math.cos(phi), s=Math.sin(phi)
-    for(let i=0;i<3;i++){ const aip=a[i][p],aiq=a[i][q]; a[i][p]=c*aip-s*aiq; a[i][q]=s*aip+c*aiq }
-    for(let i=0;i<3;i++){ const api=a[p][i],aqi=a[q][i]; a[p][i]=c*api-s*aqi; a[q][i]=s*api+c*aqi }
-    for(let i=0;i<3;i++){ const vip=V[i][p],viq=V[i][q]; V[i][p]=c*vip-s*viq; V[i][q]=s*vip+c*viq }
-  }
-  return {values:[a[0][0],a[1][1],a[2][2]], vectors:V}
-}
-// One smooth ellipsoid per region-hemisphere, sized + ORIENTED to the point cloud's principal axes →
-// rounded anatomical lobes with no facets and no self-intersection. Scale is baked into the geometry
-// so the model matrix is a pure rotation+translation and the fresnel normals stay correct.
+// Anatomically-accurate convex hull of the region-hemisphere points (kept STRICTLY convex — any
+// smoothing breaks convexity and, under the transparent double-sided material, the resulting folds
+// stack into a muddy tangle). Smooth vertex normals soften the shading; mild centroid shrink separates.
 function makeLobe(points,region,ctr){
   if(points.length<8) return null
-  let c00=0,c01=0,c02=0,c11=0,c12=0,c22=0
-  for(const p of points){ const dx=p.x-ctr.x,dy=p.y-ctr.y,dz=p.z-ctr.z
-    c00+=dx*dx;c01+=dx*dy;c02+=dx*dz;c11+=dy*dy;c12+=dy*dz;c22+=dz*dz }
-  const n=points.length, {values,vectors}=eigenSym3([c00/n,c01/n,c02/n,c11/n,c12/n,c22/n])
-  const ax=LOBE_K*Math.sqrt(Math.max(values[0],1)), ay=LOBE_K*Math.sqrt(Math.max(values[1],1)), az=LOBE_K*Math.sqrt(Math.max(values[2],1))
-  const geo=new THREE.SphereGeometry(1,28,18), pos=geo.attributes.position
-  for(let i=0;i<pos.count;i++) pos.setXYZ(i, pos.getX(i)*ax, pos.getY(i)*ay, pos.getZ(i)*az)
+  let geo; try{ geo=new ConvexGeometry(points.map(p=>new THREE.Vector3(p.x,p.y,p.z))) }catch(e){ return null }
+  const pos=geo.attributes.position
+  for(let i=0;i<pos.count;i++){ pos.setXYZ(i, ctr.x+(pos.getX(i)-ctr.x)*LOBE_SHRINK, ctr.y+(pos.getY(i)-ctr.y)*LOBE_SHRINK, ctr.z+(pos.getZ(i)-ctr.z)*LOBE_SHRINK) }
   pos.needsUpdate=true; geo.computeVertexNormals()
   const mat=new THREE.ShaderMaterial({
     uniforms:{ uColor:{value:new THREE.Color(colorOf(region))},
       uBody:{value:0.12}, uRimPow:{value:2.0}, uRimBoost:{value:1.7}, uDim:{value:1} },
     vertexShader:LOBE_VERT, fragmentShader:LOBE_FRAG,
     transparent:true, depthWrite:false, side:THREE.DoubleSide, blending:THREE.NormalBlending })
-  const mesh=new THREE.Mesh(geo,mat)
-  mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
-    new THREE.Vector3(vectors[0][0],vectors[1][0],vectors[2][0]),
-    new THREE.Vector3(vectors[0][1],vectors[1][1],vectors[2][1]),
-    new THREE.Vector3(vectors[0][2],vectors[1][2],vectors[2][2])))
-  mesh.position.set(ctr.x,ctr.y,ctr.z); mesh.renderOrder=-2; mesh.userData.region=region
+  const mesh=new THREE.Mesh(geo,mat); mesh.renderOrder=-2; mesh.userData.region=region
   return mesh
 }
 function lobeSideOf(node,splitReg){ return splitReg.has(node.cluster) ? (node.x<0?'L':'R') : 'W' }
