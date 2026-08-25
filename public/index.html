@@ -536,12 +536,13 @@ function pulseLink(s,t,type){
     opacity:0,depthWrite:false,blending:THREE.AdditiveBlending})); glow.scale.setScalar(14)
   // tapering ember tail
   const embers=[]
+  const PG=pulseGroup||Graph.scene()   // arrow/glow/ember sprites go in the toggleable pulse layer
   for(let j=0;j<TAIL_N;j++){
     const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:pulseTexture(),color:col,transparent:true,
       opacity:0,depthWrite:false,blending:THREE.AdditiveBlending}))
-    (pulseGroup||Graph.scene()).add(sp); embers.push(sp)
+    PG.add(sp); embers.push(sp)
   }
-  const PG=pulseGroup||Graph.scene(); PG.add(glow); PG.add(head)
+  PG.add(glow); PG.add(head)
   // HTML label that rides with the arrowhead
   const label=document.createElement('div'); label.className='plabel'
   label.textContent=type||'msg'; label.style.color=pulseColor(type); labelsEl.appendChild(label)
