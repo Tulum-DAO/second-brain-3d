@@ -241,6 +241,8 @@
   <select class="scr-win" id="scr-win" title="replay window">
     <option value="1">1h</option><option value="6" selected>6h</option>
     <option value="24">24h</option><option value="72">72h</option>
+    <option value="168">7d</option><option value="720">30d</option>
+    <option value="2160">90d</option><option value="4400">all</option>
   </select>
 </div>
 
@@ -715,9 +717,14 @@ const scrRange=document.getElementById('scr-range'), scrTime=document.getElement
 const scrToggle=document.getElementById('scr-toggle'), scrLiveBtn=document.getElementById('scr-live'), scrWin=document.getElementById('scr-win')
 async function loadHistory(hours){
   try{
-    const r=await fetch(`/api/history?hours=${hours}`); const d=await r.json()
-    scr.events=d.events; scr.hours=hours
-    if(scr.events.length){ scr.t0=+new Date(scr.events[0].t); scr.t1=+new Date(scr.events[scr.events.length-1].t) }
+    // messages (recent) + agent spawns (span the full window) merged into one timeline, sorted by time
+    const [hr,sr]=await Promise.all([
+      fetch(`/api/history?hours=${hours}`).then(r=>r.json()).catch(()=>({events:[]})),
+      fetch(`/api/spawns?hours=${hours}`).then(r=>r.json()).catch(()=>({events:[]}))
+    ])
+    const ev=[...(hr.events||[]), ...(sr.events||[])].sort((a,b)=> a.t<b.t?-1:a.t>b.t?1:0)
+    scr.events=ev; scr.hours=hours; scr.spawnCount=(sr.events||[]).length
+    if(ev.length){ scr.t0=+new Date(ev[0].t); scr.t1=+new Date(ev[ev.length-1].t) }
   }catch{ scr.events=[] }
 }
 const scrClock=tt=>new Date(tt).toLocaleString([], {month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})
@@ -771,8 +778,9 @@ function scrPlay(){
     const dt=now-last; last=now
     scr.cursor+=dt/REPLAY_MS*span
     while(scr.idx<scr.events.length && +new Date(scr.events[scr.idx].t)<=scr.cursor){
-      const e=scr.events[scr.idx]; pulseLink(e.from,e.to,e.type) // pulseLink sequences sender/receiver glow
-      ticker(`${e.fromName} → ${e.toName} · ${e.type||'msg'}`)
+      const e=scr.events[scr.idx]
+      if(e.kind==='spawn'){ flashNode(e.id,2.4); ticker(`◆ spawned · ${e.name}`) }   // agent first-appearance
+      else { pulseLink(e.from,e.to,e.type); ticker(`${e.fromName} → ${e.toName} · ${e.type||'msg'}`) }
       scr.idx++
     }
     scrRange.value=Math.min(1000,Math.max(0,(scr.cursor-scr.t0)/span*1000))
