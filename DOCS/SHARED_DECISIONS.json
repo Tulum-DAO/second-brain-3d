@@ -1,0 +1,33 @@
+{
+  "project_dir": "/home/shaw/repos/second-brain",
+  "last_updated": "2026-08-25T09:01:28Z",
+  "active_decisions": {
+    "DEC-1787647710": {
+      "id": "DEC-1787647710",
+      "topic": "second-brain :7373 anatomical brain-layout redesign + transcript firehose",
+      "proposal_file": "/tmp/brain-layout-proposal.md",
+      "required_models": [
+        "custom-audience-builder-claude",
+        "custom-audience-builder-agy"
+      ],
+      "status": "CONSENSUS_REACHED",
+      "created_at": "2026-08-25T08:48:30Z",
+      "created_by": "second-brain-dev",
+      "votes": {
+        "custom-audience-builder-claude": {
+          "vote": "APPROVE",
+          "feedback": "APPROVE - verified against server.js, collect.js, index.html; the flyTo near-origin bug, reconcile wholesale link replacement, and dangling-link landmines are all real and the plan addresses each. Architecture is sound and appropriately incremental (dual positions, pin-before-init, dust shell outside the digest, shadow-mode firehose, layout flag rollout). Five cautions to fold in during implementation: (1) The no-overlap invariant is NOT actually guaranteed across NEIGHBORING anchors, only within one anchor cluster. Node radii are roughly 9-10 world units and cluster pair spacing roughly 20, which is comparable to the expected nearest-neighbor anchor spacing of 4k points on a 340-unit brain, so a collision cluster on one anchor can smear into the next claimed anchor. Fix cheaply in P1/P2: select the CLAIMABLE anchor subset via Poisson-disk / min-separation subsampling (separation at least 2*r_max plus cluster spiral margin) and leave the rest dust-only; this stays deterministic and churn-stable. Keep the global smoke test but define what happens when it fails. (2) P3 only covers the init-time swap; the runtime node.add WS path must also swap to brain coords and pin IMMEDIATELY in brain mode - the current handler calls graphData then pins via a 1600ms setTimeout, leaving an unpinned node drifting in an otherwise frozen layout - and must drop brain:null nodes arriving via deltas. (3) Decision 4 says the server sets n.cluster = region in brain mode, but the server serves ONE graph to both layouts and cannot know the client mode over WS; do the cluster overwrite client-side from brain.region during the swap, otherwise pillar-mode clients break during the rollout window. (4) In reconcile, preserved firehose links must be exempted from the next.index endpoint filter and instead validated against the MERGED index, since lazy script nodes are never in buildGraph output. (5) The 64KB tailer remainder cap will silently drop fires whose tool_use JSONL line exceeds 64KB, which large Write payloads routinely do; acceptable tradeoff but log a counter so shadow-mode review can see the loss rate. None of these change the architecture, so APPROVE rather than COUNTER_PROPOSE.",
+          "timestamp": "2026-08-25T08:50:30Z",
+          "proposal_sha256": "5f37e6f26c6d635e4b460a37b938887ed6cb2838c370b12c49f1258ca708bba3"
+        },
+        "custom-audience-builder-agy": {
+          "vote": "APPROVE",
+          "feedback": "Round-2 APPROVE after 5-finding COUNTER_PROPOSE was amended: slot-from-own-hash join stability, rotation reads offset 0 vs EOF-on-boot, 24h preserve-set sweep, async canonical lineage batch CLI at 30s cadence, node-drag inapplicable (enableNodeDrag false). Architecture sound, ready for execution.",
+          "timestamp": "2026-08-25T09:01:28Z",
+          "proposal_sha256": "8c100e4710233b350eb7e2fbaa891522be3ec7c706754c71c5e02a0f101434fb"
+        }
+      }
+    }
+  },
+  "historical_decisions": []
+}
