@@ -49,6 +49,15 @@
   .title .b{color:var(--amber)}
   .subtitle{margin-top:12px;font-size:12px;color:var(--muted);letter-spacing:.16em}
   .subtitle b{color:var(--cream);font-weight:500}
+  .orbit-btn{margin-top:14px;pointer-events:auto;display:inline-flex;align-items:center;gap:8px;
+    background:transparent;border:1px solid var(--line);color:var(--cream);font-family:inherit;font-size:10px;
+    letter-spacing:.16em;text-transform:uppercase;padding:6px 12px;border-radius:6px;cursor:pointer;transition:all .15s}
+  .orbit-btn:hover{border-color:var(--amber);color:var(--amber)}
+  .orbit-btn.on{background:var(--amber);color:#0e0c0a;border-color:var(--amber)}
+  .orbit-btn .oi{width:9px;height:9px;border:1.5px solid currentColor;border-radius:50%;position:relative;flex:0 0 auto}
+  .orbit-btn .oi::after{content:'';position:absolute;width:3px;height:3px;border-radius:50%;background:currentColor;top:-2px;left:2px}
+  .orbit-btn.on .oi{animation:orbspin 3s linear infinite}
+  @keyframes orbspin{to{transform:rotate(360deg)}}
 
   /* search */
   .searchwrap{top:26px;left:50%;transform:translateX(-50%);pointer-events:auto}
@@ -208,6 +217,7 @@
   <div class="eyebrow"><span class="live"></span>Live VPS infrastructure · srv1397016</div>
   <div class="title">Second<br><span class="b">Brain</span></div>
   <div class="subtitle" id="subtitle">connecting…</div>
+  <button class="orbit-btn" id="orbit-btn" title="slow flat-plane orbit around the center"><span class="oi"></span>Orbit</button>
 </div>
 
 <div class="ui searchwrap">
@@ -641,15 +651,16 @@ function animFlashes(now){
     if(l.__act){ l.__act=Math.max(0,l.__act-dt/1600); anyAct=true }
   }
   if(anyAct && now-(animFlashes._lastLink||0)>70){ reapplyLinks(); animFlashes._lastLink=now }
-  // WASDQE free-fly movement
+  // WASDQE free-fly movement + slow auto-orbit
   const flying=flyStep(dt)
+  const orbited=orbitStep(dt)
   // spriteDirty keeps us RENDERING for a short window after a link restyle (see reapplyLinks),
   // so a drag visibly stays glued instead of freezing on a collapsed frame.
   const spriteDirty=now<spriteDirtyUntil
   // CRITICAL: after the force sim cools, ForceGraph throttles its render loop to a few fps,
   // so our per-frame sprite moves would only paint occasionally (comet appears to teleport).
   // While anything is animating (pulses/flashes/heat/flying) or re-anchoring, force a full-rate render.
-  if(Graph && (activePulses.length || flashing.size || anyAct || flying || spriteDirty || hoverNode || hoverLink)){
+  if(Graph && (activePulses.length || flashing.size || anyAct || flying || orbited || spriteDirty || hoverNode || hoverLink)){
     // Re-anchor sprites to their static node coords IMMEDIATELY before painting. Setting any link
     // accessor triggers three-forcegraph's debounced scene digest, which resets node objects to
     // (0,0,0) and expects an engine tick to restore them — but our engine is stopped, so without
@@ -661,6 +672,43 @@ function animFlashes(now){
   requestAnimationFrame(animFlashes)
 }
 
+// ---- slow flat-plane auto-orbit (top-left button) ----
+// Circles the brain's center at a fixed height (camera pitch = 0 → level horizon), so the whole
+// constellation sweeps by on a flat turntable. Runs in the animFlashes loop; any manual drag/fly
+// cancels it so the user always wins.
+let orbiting=false, orbitAngle=0, orbitR=800, orbitCtr={x:0,y:0,z:0}
+const ORBIT_SPEED=0.11   // radians/sec — slow
+function graphCenter(){
+  let N=DATA.nodes; if(BRAIN){ const b=N.filter(n=>BRAIN_REGIONS.has(n.cluster)); if(b.length) N=b }
+  if(!N.length) return {x:0,y:0,z:0}
+  let cx=0,cy=0,cz=0; for(const n of N){cx+=n.x||0;cy+=n.y||0;cz+=n.z||0}
+  const k=N.length; return {x:cx/k,y:cy/k,z:cz/k}
+}
+function setOrbit(on){
+  orbiting=on
+  const btn=document.getElementById('orbit-btn'); if(btn) btn.classList.toggle('on',on)
+  if(on&&Graph){
+    orbitCtr=graphCenter()
+    const cam=Graph.camera()
+    orbitR=Math.hypot(cam.position.x-orbitCtr.x, cam.position.z-orbitCtr.z)||orbitR
+    orbitAngle=Math.atan2(cam.position.z-orbitCtr.z, cam.position.x-orbitCtr.x)
+    // lock the camera's up-vector to world +Y so the horizon is level — kills any roll left over
+    // from a prior free-fly/drag so the orbit is a purely LATERAL turntable around the Y axis.
+    cam.up.set(0,1,0)
+    if(window.__controls){ window.__controls.autoRotate=false; window.__controls.object.up.set(0,1,0) }
+  }
+}
+function orbitStep(dt){
+  if(!orbiting||!Graph) return false
+  orbitAngle+=ORBIT_SPEED*Math.min(dt,50)/1000
+  const c=orbitCtr, cam=Graph.camera()
+  // camera y == center y → pitch 0 (level); position sweeps the x–z circle → rotation about world Y.
+  cam.position.set(c.x+Math.cos(orbitAngle)*orbitR, c.y, c.z+Math.sin(orbitAngle)*orbitR)
+  cam.up.set(0,1,0)                                   // keep up on world Y every frame → no roll
+  const ctrl=window.__controls
+  if(ctrl){ ctrl.object.up.set(0,1,0); ctrl.target.set(c.x,c.y,c.z); ctrl.update() } else cam.lookAt(c.x,c.y,c.z)
+  return true
+}
 // translate camera + orbit target together along the view basis; returns true if moved
 const FLY_SPEED=620 // world-units per second
 function flyStep(dt){
@@ -1010,6 +1058,7 @@ function applyLayer(name){
 }
 // Wire the top-right Layers menu: per-layer checkboxes + the collision-offset slider.
 function initLayersMenu(){
+  const ob=document.getElementById('orbit-btn'); if(ob) ob.addEventListener('click',()=>setOrbit(!orbiting))
   const panel=document.getElementById('layers'); if(!panel) return
   panel.querySelectorAll('input[data-layer]').forEach(cb=>{
     cb.checked=LAYERS[cb.dataset.layer]
@@ -1105,7 +1154,7 @@ function init(data){
   addEventListener('keydown',ev=>{
     if(document.activeElement===searchEl) return          // don't hijack search typing
     const k=ev.key.toLowerCase()
-    if(MOVE_KEYS[k]){ keyState[k]=true; c.autoRotate=false; ev.preventDefault() }
+    if(MOVE_KEYS[k]){ keyState[k]=true; c.autoRotate=false; if(orbiting)setOrbit(false); ev.preventDefault() }
   })
   addEventListener('keyup',ev=>{ const k=ev.key.toLowerCase(); if(MOVE_KEYS[k]) keyState[k]=false })
   addEventListener('blur',()=>{ keyState={} })            // stop moving if window loses focus
@@ -1135,7 +1184,7 @@ function init(data){
   const canvas=Graph.renderer().domElement
   canvas.addEventListener('pointerdown',ev=>{
     if(ev.button!==0) return                    // left-drag = orbit; right/middle = pan/zoom, leave alone
-    c.autoRotate=false
+    c.autoRotate=false; if(orbiting)setOrbit(false)   // manual drag cancels the auto-orbit
     const n=bestInViewNode()
     if(n){                                       // anchor the orbit pivot onto that node
       c.target.set(n.x,n.y,n.z); c.enableRotate=true; c.update()
