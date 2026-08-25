@@ -144,7 +144,28 @@
   .loader .pulse{animation:pulse 1.4s ease-in-out infinite}
   @keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
 
-  body.embed .topbar,body.embed .hint,body.embed .loader,body.embed .subtitle{display:none!important}
+  /* top-right layers menu */
+  .layers{top:92px;right:26px;pointer-events:auto;background:rgba(16,13,11,.92);border:1px solid var(--line);
+    border-radius:8px;padding:12px 14px;backdrop-filter:blur(6px);min-width:174px}
+  .layers .lyr-title{font-size:9px;letter-spacing:.34em;color:var(--muted);text-transform:uppercase;margin-bottom:10px}
+  .layers label{display:flex;align-items:center;gap:8px;font-size:10px;letter-spacing:.1em;color:var(--muted);
+    text-transform:uppercase;cursor:pointer;padding:3px 0}
+  .layers label:hover{color:var(--cream)}
+  .layers input[type=checkbox]{appearance:none;-webkit-appearance:none;width:12px;height:12px;border:1px solid var(--line);
+    border-radius:3px;cursor:pointer;position:relative;flex:0 0 auto;background:transparent}
+  .layers input[type=checkbox]:checked{background:var(--amber);border-color:var(--amber)}
+  .layers input[type=checkbox]:checked::after{content:'';position:absolute;left:3px;top:0;width:4px;height:8px;
+    border:solid #0e0c0a;border-width:0 2px 2px 0;transform:rotate(45deg)}
+  .layers .lyr-slider{margin-top:11px;border-top:1px solid var(--line);padding-top:10px}
+  .layers .lyr-slabel{font-size:9px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;margin-bottom:8px}
+  .layers .lyr-slabel span{color:var(--amber)}
+  .layers input[type=range]{-webkit-appearance:none;appearance:none;width:100%;height:3px;border-radius:2px;
+    background:rgba(237,228,211,.18);outline:none;cursor:pointer}
+  .layers input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:12px;height:12px;border-radius:50%;
+    background:var(--amber);box-shadow:0 0 8px rgba(232,162,37,.6);cursor:pointer}
+  .layers input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--amber);cursor:pointer}
+
+  body.embed .topbar,body.embed .hint,body.embed .loader,body.embed .subtitle,body.embed .layers{display:none!important}
 
   @media (max-width:640px){
     .topbar{left:18px;top:64px}.legend{max-width:60vw;right:16px;bottom:34px}
@@ -176,6 +197,21 @@
   <div class="rk">Now inspecting</div>
   <div class="rv" id="rv">the whole operation</div>
   <div class="rp" id="rp" style="color:var(--amber)">all pillars</div>
+</div>
+
+<div class="ui layers" id="layers">
+  <div class="lyr-title">Layers</div>
+  <label data-brainonly><input type="checkbox" data-layer="lobes"> Lobe boundaries</label>
+  <label><input type="checkbox" data-layer="orbs"> Agent orbs</label>
+  <label><input type="checkbox" data-layer="edges"> Edges</label>
+  <label><input type="checkbox" data-layer="glows"> Edge glows</label>
+  <label><input type="checkbox" data-layer="pulses"> Arrow sprites</label>
+  <label><input type="checkbox" data-layer="labels"> Message labels</label>
+  <label><input type="checkbox" data-layer="fx"> Retro FX</label>
+  <div class="lyr-slider" data-brainonly>
+    <div class="lyr-slabel">Collision offset · <span id="lyr-coll-val">2</span></div>
+    <input type="range" id="lyr-coll" min="0" max="30" value="2">
+  </div>
 </div>
 
 <div class="ui legend">
@@ -280,6 +316,11 @@ const commLinks=new Map() // "s|t" -> link obj
 let spriteDirtyUntil=0    // re-anchor sprites in animFlashes until this time (see reapplyLinks)
 let hoverNode=null, hoverLink=null   // what the cursor is over — drives the click-target highlight
 const HOVER_SCALE=1.4     // how much a hovered node grows, so it's an obvious click target
+// top-right Layers menu — toggle each render layer independently + collision-avoidance slider
+const LAYERS={lobes:true,orbs:true,edges:true,glows:true,pulses:true,labels:true,fx:true}
+let pulseGroup=null                 // arrow/glow/ember sprites live here so they toggle as one layer
+let lobeCentroids={}, lobePlanes={} // set by loadBrainLobes; used by applyCollision to re-clamp orbs
+let collisionOffset=2               // extra spacing (world units) enforced between agent orbs in a lobe
 
 function nodeSprite(node){
   const m=new THREE.SpriteMaterial({map:clusterTex[node.cluster]||clusterTex.state||Object.values(clusterTex)[0],
@@ -315,9 +356,10 @@ const clusterOf = end => (typeof end==='object'&&end) ? end.cluster : (byId.get(
 
 // unified link styling — incorporates focus/select dimming AND time-activity heat (__act)
 function linkColorFn(l){
+  if(!LAYERS.edges) return 'rgba(0,0,0,0)'           // Edges layer off → hide all links
   if(l===hoverLink) return 'rgba(255,241,204,.98)'   // hovered edge: bright, wins over all dimming
   const a=l.source.id||l.source, b=l.target.id||l.target
-  const act=l.__act||0
+  const act=LAYERS.glows?(l.__act||0):0              // Edge-glows layer off → ignore heat, no glow
   // dimming context
   if(focusId && !(a===focusId||b===focusId)) return act>0?`rgba(255,${(200-act*40)|0},${(120-act*80)|0},${(0.25+act*0.6).toFixed(3)})`:'rgba(237,228,211,.06)'
   if(selected && !(clusterOf(l.source)===selected||clusterOf(l.target)===selected)) return 'rgba(237,228,211,.06)'
@@ -344,7 +386,7 @@ function linkWidthFn(l){
   // over a ~950u graph, sub-unit widths are invisible — hence the visible skeleton floor below.
   let base=l.kind==='comm'?Math.min(0.8+Math.log2((l.weight||1)+1)*0.5,3.2):(l.kind==='member'?1.1:0.9)
   if(BRAIN&&l.kind==='comm') base*=0.5   // thinner resting web so the brain silhouette dominates
-  const w=base + (l.__act||0)*1.8   // subtle swell; the comet is the primary motion cue
+  const w=base + (LAYERS.glows?(l.__act||0):0)*1.8   // subtle swell; the comet is the primary motion cue
   return l===hoverLink ? w+2.2 : w  // hovered edge swells so it's an obvious click target
 }
 // Setting ANY link accessor makes three-forcegraph re-digest the scene, which resets every
@@ -497,9 +539,9 @@ function pulseLink(s,t,type){
   for(let j=0;j<TAIL_N;j++){
     const sp=new THREE.Sprite(new THREE.SpriteMaterial({map:pulseTexture(),color:col,transparent:true,
       opacity:0,depthWrite:false,blending:THREE.AdditiveBlending}))
-    Graph.scene().add(sp); embers.push(sp)
+    (pulseGroup||Graph.scene()).add(sp); embers.push(sp)
   }
-  Graph.scene().add(glow); Graph.scene().add(head)
+  const PG=pulseGroup||Graph.scene(); PG.add(glow); PG.add(head)
   // HTML label that rides with the arrowhead
   const label=document.createElement('div'); label.className='plabel'
   label.textContent=type||'msg'; label.style.color=pulseColor(type); labelsEl.appendChild(label)
@@ -522,9 +564,9 @@ function animFlashes(now){
     const p=activePulses[i]; p.t+=dt
     const f=p.t/p.dur
     if(f>=1){
-      Graph.scene().remove(p.head); Graph.scene().remove(p.glow)
+      const PG=pulseGroup||Graph.scene(); PG.remove(p.head); PG.remove(p.glow)
       p.head.material.dispose(); p.glow.material.dispose()
-      for(const sp of p.embers){ Graph.scene().remove(sp); sp.material.dispose() }
+      for(const sp of p.embers){ PG.remove(sp); sp.material.dispose() }
       if(p.label.parentNode) p.label.remove()
       activePulses.splice(i,1); continue
     }
@@ -869,33 +911,81 @@ async function loadBrainLobes(){
   if(!Graph) return
   try{
     const a=await (await fetch('/api/brain-points')).json()
-    const grp=new THREE.Group(), centroids={}, planes={}, splitReg=new Set()
+    const grp=new THREE.Group(); lobeCentroids={}; lobePlanes={}; const splitReg=new Set()
     for(const region in a.regions){
       const all=a.regions[region]
       // Split each region at the sagittal midline (x = L-R axis) into hemispheres so the bilateral
       // structure + central fissure read; midline-only regions (too few points one side) stay whole.
       const L=all.filter(p=>p.x<0), R=all.filter(p=>p.x>=0)
       const sides = (Math.min(L.length,R.length)>=HEMI_MIN) ? (splitReg.add(region),[['L',L],['R',R]]) : [['W',all]]
-      for(const [side,pts] of sides){ const c=centroidOf(pts); const key=region+'|'+side; centroids[key]=c
-        const m=makeLobe(pts,region,c); if(m){ grp.add(m); planes[key]=facePlanes(m.geometry,c) } }
+      for(const [side,pts] of sides){ const c=centroidOf(pts); const key=region+'|'+side; lobeCentroids[key]=c
+        const m=makeLobe(pts,region,c); if(m){ grp.add(m); lobePlanes[key]=facePlanes(m.geometry,c) } }
     }
     Graph.scene().add(grp); window.__lobes=grp
-    // Re-seat every region-agent so its orb sits INSIDE its lobe: cast a ray from the lobe centroid
-    // through the agent and clamp its distance to 90% of where that ray exits the (shrunk) convex
-    // hull. Centroid ∈ convex hull ⇒ this GUARANTEES containment regardless of the old spiral offset.
-    let moved=0, outside=0
+    // Seat every region-agent INSIDE its lobe: cast a ray from the lobe centroid through the agent and
+    // clamp its distance to 90% of where that ray exits the (shrunk) convex hull. Centroid ∈ convex
+    // hull ⇒ containment GUARANTEED. Record the seed position for the collision-offset relaxation.
     for(const n of DATA.nodes){
       if(!BRAIN_REGIONS.has(n.cluster)) continue
-      const key=n.cluster+'|'+lobeSideOf(n,splitReg), c=centroids[key], pl=planes[key]; if(!c||!pl) continue
+      const key=n.cluster+'|'+lobeSideOf(n,splitReg), c=lobeCentroids[key], pl=lobePlanes[key]; if(!c||!pl) continue
       let dx=n.x-c.x, dy=n.y-c.y, dz=n.z-c.z; const r=Math.hypot(dx,dy,dz)||1; dx/=r;dy/=r;dz/=r
       const texit=hullExit(pl,c,dx,dy,dz)
       const rr = isFinite(texit) ? Math.min(r, texit*0.90) : r*AGENT_SHRINK
-      if(rr<r-1e-6) outside++
-      n.x=c.x+dx*rr; n.y=c.y+dy*rr; n.z=c.z+dz*rr; n.fx=n.x; n.fy=n.y; n.fz=n.z; moved++
+      n.x=c.x+dx*rr; n.y=c.y+dy*rr; n.z=c.z+dz*rr
+      n.__lobeKey=key; n.__r=baseScale(n); n.__seed={x:n.x,y:n.y,z:n.z}
     }
-    window.__lobeContain={moved,clamped:outside}
-    if(moved && window.__settled){ syncSprites(); spriteDirtyUntil=performance.now()+600 }
+    applyCollision(collisionOffset)   // enforce inter-orb spacing (re-clamped to stay inside the hull)
   }catch(e){ console.warn('[brain] lobes failed',e) }
+}
+const kick=()=>{ spriteDirtyUntil=performance.now()+350 }   // force the render loop to paint a few frames
+// Client-side collision avoidance: from each orb's seeded position, push same-lobe orbs apart until
+// they're at least (rA+rB+offset) apart, then re-clamp every orb inside its convex hull. Live-tunable
+// via the top-right slider. Starts from the seed each call so lowering the offset relaxes correctly.
+function applyCollision(offset){
+  collisionOffset=offset
+  const agents=DATA.nodes.filter(n=>n.__seed && n.__lobeKey)
+  if(!agents.length) return
+  for(const n of agents){ n.x=n.__seed.x; n.y=n.__seed.y; n.z=n.__seed.z }
+  const byLobe=new Map()
+  for(const n of agents){ let arr=byLobe.get(n.__lobeKey); if(!arr){ arr=[]; byLobe.set(n.__lobeKey,arr) } arr.push(n) }
+  for(let it=0;it<6;it++){
+    for(const [key,arr] of byLobe){
+      for(let i=0;i<arr.length;i++) for(let j=i+1;j<arr.length;j++){
+        const A=arr[i],B=arr[j]; let dx=B.x-A.x,dy=B.y-A.y,dz=B.z-A.z; let d=Math.hypot(dx,dy,dz)||1e-3
+        const need=A.__r+B.__r+offset
+        if(d<need){ const p=(need-d)/2/d; dx*=p;dy*=p;dz*=p; A.x-=dx;A.y-=dy;A.z-=dz; B.x+=dx;B.y+=dy;B.z+=dz }
+      }
+      const c=lobeCentroids[key], pl=lobePlanes[key]; if(!c||!pl) continue
+      for(const n of arr){ let ex=n.x-c.x,ey=n.y-c.y,ez=n.z-c.z; const r=Math.hypot(ex,ey,ez)||1; ex/=r;ey/=r;ez/=r
+        const t=hullExit(pl,c,ex,ey,ez), rr=isFinite(t)?Math.min(r,t*0.90):r
+        n.x=c.x+ex*rr; n.y=c.y+ey*rr; n.z=c.z+ez*rr }
+    }
+  }
+  for(const n of agents){ n.fx=n.x; n.fy=n.y; n.fz=n.z }
+  if(window.__settled){ syncSprites(); kick() }
+}
+// Apply a single layer toggle to the live scene.
+function applyLayer(name){
+  const on=LAYERS[name]
+  if(name==='lobes'){ if(window.__lobes) window.__lobes.visible=on }
+  else if(name==='orbs'){ for(const n of DATA.nodes) if(n.__obj) n.__obj.visible=on }
+  else if(name==='pulses'){ if(pulseGroup) pulseGroup.visible=on }
+  else if(name==='labels'){ labelsEl.style.display=on?'':'none' }
+  else if(name==='fx'){ document.querySelectorAll('.fx').forEach(e=>e.style.display=on?'':'none') }
+  else if(name==='edges'||name==='glows'){ reapplyLinks() }   // edges/glows read LAYERS in the accessors
+  kick()
+}
+// Wire the top-right Layers menu: per-layer checkboxes + the collision-offset slider.
+function initLayersMenu(){
+  const panel=document.getElementById('layers'); if(!panel) return
+  panel.querySelectorAll('input[data-layer]').forEach(cb=>{
+    cb.checked=LAYERS[cb.dataset.layer]
+    cb.addEventListener('change',()=>{ LAYERS[cb.dataset.layer]=cb.checked; applyLayer(cb.dataset.layer) })
+  })
+  const coll=document.getElementById('lyr-coll'), cv=document.getElementById('lyr-coll-val')
+  if(coll){ coll.value=collisionOffset; cv.textContent=collisionOffset
+    coll.addEventListener('input',()=>{ cv.textContent=coll.value; applyCollision(+coll.value) }) }
+  if(!BRAIN) panel.querySelectorAll('[data-brainonly]').forEach(e=>e.style.display='none') // lobes/collision are brain-only
 }
 // Isolate/focus dims the non-selected lobes (mirrors the node/edge dimming). No-op outside brain.
 function refreshLobes(){
@@ -1021,10 +1111,11 @@ function init(data){
   const scene=Graph.scene()
   const key=new THREE.PointLight(0xffeedd,1.5,1200);key.position.set(200,150,100);scene.add(key)
   scene.add(new THREE.AmbientLight(0x403a30,0.7))
+  pulseGroup=new THREE.Group(); scene.add(pulseGroup)   // arrow/glow/ember sprites → one toggleable layer
   if(BRAIN) loadBrainLobes()   // translucent region lobes (outside the forcegraph digest)
 
   window.__brain={Graph,DATA,focusOn,clearFocus,pulseLink,get focusId(){return focusId},get pulses(){return activePulses},get scr(){return scr},applySnapshotAt} // debug handle
-  renderLegend()
+  renderLegend(); initLayersMenu()
   const st=data.stats
   document.getElementById('subtitle').innerHTML=`<b>${st.agents}</b> agents · <b>${st.repos}</b> repos · <b>${st.clients}</b> clients · <b>${st.live}</b> live · <b>${st.commEdges||0}</b> comm-edges · <b>${st.msgs24h||0}</b> msgs/24h`
   // loader stays up while the sim settles (hidden by onEngineStop); fallback in case it never stops
