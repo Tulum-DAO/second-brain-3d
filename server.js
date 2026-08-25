@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import chokidar from 'chokidar';
 import { buildGraph, liveSessions, resolveActorId, normActor, hubSeed, db, AO, REPOS } from './lib/collect.js';
+import { brainPosFor, brainAsset, REGION_LEGEND } from './lib/layout-brain.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 7373;
@@ -28,10 +29,15 @@ const server = http.createServer((req, res) => {
   const url = req.url.split('?')[0];
   if (url === '/api/graph') {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-    res.end(JSON.stringify({ nodes: graph.nodes, links: graph.links, stats: graph.stats }));
+    res.end(JSON.stringify({ nodes: graph.nodes, links: graph.links, stats: graph.stats, legend: REGION_LEGEND }));
     return;
   }
   // timeline for the scrubber: every message in the last N hours, resolved to node ids
+  if (url === '/api/brain-points') {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'max-age=3600' });
+    res.end(JSON.stringify(brainAsset()));
+    return;
+  }
   if (url === '/api/history') {
     const q = new URLSearchParams(req.url.split('?')[1] || '');
     const hours = Math.min(Math.max(parseInt(q.get('hours') || '6', 10), 1), 168);
@@ -95,7 +101,7 @@ const server = http.createServer((req, res) => {
 // ---- WebSocket broadcast ----
 const wss = new WebSocketServer({ server });
 wss.on('connection', (ws) => {
-  ws.send(JSON.stringify({ type: 'init', version: VERSION, graph: { nodes: graph.nodes, links: graph.links, stats: graph.stats } }));
+  ws.send(JSON.stringify({ type: 'init', version: VERSION, graph: { nodes: graph.nodes, links: graph.links, stats: graph.stats, legend: REGION_LEGEND } }));
 });
 function broadcast(msg) {
   const s = JSON.stringify(msg);
@@ -167,6 +173,7 @@ function ensureActorNode(name) {
     val: isAgent ? 8 : (human ? 12 : 8), status, ...pos,
     meta: { role: isAgent ? 'live tmux session' : (human ? 'human operator' : 'orchestration daemon'),
       tmux: isAgent ? norm : undefined, discovered: true } };
+  node.brain = brainPosFor(node, graph.nodes);   // anatomical position for runtime-discovered actors
   graph.nodes.push(node); graph.index.set(nid, node);
   // link to its pillar hub so the force layout keeps it snug in the cluster
   const hubId = `hub:${cluster}`;
