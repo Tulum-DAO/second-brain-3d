@@ -105,9 +105,12 @@ const server = http.createServer((req, res) => {
     let events = [];
     if (d) {
       try {
+        // created_at is ISO8601 with a 'T' separator + '+00:00' offset; datetime('now',?) yields a
+        // space-separated string. Raw string-compare is WRONG (the 'T' at index 10 always beats the
+        // space, so every row from *today* passes any intra-day window). Normalise both via datetime().
         const rows = d.prepare(
           `SELECT id, from_agent, to_agent, type, subject, created_at
-             FROM messages WHERE created_at > datetime('now', ?) AND to_agent IS NOT NULL
+             FROM messages WHERE datetime(created_at) > datetime('now', ?) AND to_agent IS NOT NULL
              ORDER BY created_at ASC LIMIT 20000`).all(`-${hours} hour`);
         for (const m of rows) {
           const from = resolveHistoric(m.from_agent), to = resolveHistoric(m.to_agent);
