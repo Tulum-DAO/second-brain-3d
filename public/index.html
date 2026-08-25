@@ -215,9 +215,23 @@ import ForceGraph3D from 'https://esm.sh/3d-force-graph@1.73.4?external=three'
 
 const EMBED = new URLSearchParams(location.search).get('embed') === '1'
 if (EMBED) document.body.classList.add('embed')
+// ---- layout / "shape" selection ----
+// A shape is pure presentation: the graph MODEL is identical for every layout (same /api/graph,
+// same WS, same dual-baked coords) — only the client-side arrangement (positions/camera/dust)
+// differs. Shapes get a clean route each (/field=pillars, /brain=brain, future /orbits …); the
+// ?layout= query still works as an override for embeds where the path may be fixed.
+const KNOWN_LAYOUTS = new Set(['pillars','brain'])
+const ROUTE_LAYOUT = { field:'pillars', brain:'brain' }   // path segment → layout name
+function resolveLayout(){
+  const q = new URLSearchParams(location.search).get('layout')
+  if(q && KNOWN_LAYOUTS.has(q)) return q
+  const seg = location.pathname.replace(/^\/+|\/+$/g,'').split('/')[0]
+  return ROUTE_LAYOUT[seg] || 'pillars'
+}
+const LAYOUT = resolveLayout()
 // anatomical brain layout: nodes swap to their n.brain coords + pin, cluster becomes the
 // functional region, hubs/queue/state drop out, and a dust point-cloud fills the silhouette.
-const BRAIN = new URLSearchParams(location.search).get('layout') === 'brain'
+const BRAIN = LAYOUT === 'brain'
 const ALL_LABEL = BRAIN ? 'all regions' : 'all pillars'
 
 // Pillar palette (default). In brain mode this is REPLACED by the server-provided region
