@@ -53,6 +53,13 @@ function resolveHistoric(name) {
   const direct = resolveActorId(name, graph); if (direct) return direct;
   const head = lineageMap.get(normActor(name)); return head ? resolveActorId(head, graph) : null;
 }
+// Suppressed flows: high-volume noise Shaw doesn't want rendered (no arrow sprite, ticker, or replay).
+// Currently: the lineage daemon's soft-handoff spam to codex-dev-1 (186 msgs). Matched by type+target.
+const MUTED_FLOWS = [{ type: 'lineage_soft_handoff', to: 'codex-dev-1' }];
+function isMutedMessage(m) {
+  const to = normActor(m.to_agent);
+  return MUTED_FLOWS.some(f => m.type === f.type && to === f.to);
+}
 refreshLineage();
 
 // ---- static + json http server ----
@@ -113,6 +120,7 @@ const server = http.createServer((req, res) => {
              FROM messages WHERE datetime(created_at) > datetime('now', ?) AND to_agent IS NOT NULL
              ORDER BY created_at ASC LIMIT 20000`).all(`-${hours} hour`);
         for (const m of rows) {
+          if (isMutedMessage(m)) continue;   // suppressed flow — keep it off the replay timeline
           const from = resolveHistoric(m.from_agent), to = resolveHistoric(m.to_agent);
           if (!from || !to) continue;
           events.push({ t: m.created_at, from, to, type: m.type,
@@ -262,6 +270,7 @@ setInterval(() => {
   } catch { return; }
   for (const m of rows) {
     lastMsgSeen = m.created_at;
+    if (isMutedMessage(m)) continue;   // suppressed flow — no live pulse/ticker
     const from = ensureActorNode(m.from_agent);
     const to = ensureActorNode(m.to_agent);
     if (from) flash(from, 'message');
