@@ -38,9 +38,35 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify(brainAsset()));
     return;
   }
+  // agent spawn / first-appearance events for the scrubber. Read-only over agent-sessions.json;
+  // per agent, appearance ts = spawned_at|created_at|launched_at, else its transcript's birthtime.
+  if (url === '/api/spawns') {
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    const hours = Math.min(Math.max(parseInt(q.get('hours') || '720', 10), 1), 8760);
+    const cutoff = Date.now() - hours * 3600 * 1000;
+    let events = [];
+    try {
+      const sess = JSON.parse(fs.readFileSync(path.join(AO, 'state/agent-sessions.json'), 'utf8'));
+      const seen = new Set();
+      for (const [name, e] of Object.entries(sess)) {
+        let t = e.spawned_at || e.created_at || e.launched_at || null;
+        if (!t && e.conversation_path) { try { const st = fs.statSync(e.conversation_path); t = new Date(st.birthtimeMs || st.ctimeMs).toISOString(); } catch {} }
+        if (!t) continue;
+        const tm = +new Date(t); if (isNaN(tm) || tm < cutoff) continue;
+        const id = resolveActorId(name, graph);
+        if (!id || !graph.index.has(id) || seen.has(id)) continue;
+        seen.add(id);
+        events.push({ t, id, name: normActor(name), kind: 'spawn' });
+      }
+      events.sort((a, b) => a.t < b.t ? -1 : 1);
+    } catch {}
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify({ hours, count: events.length, events }));
+    return;
+  }
   if (url === '/api/history') {
     const q = new URLSearchParams(req.url.split('?')[1] || '');
-    const hours = Math.min(Math.max(parseInt(q.get('hours') || '6', 10), 1), 168);
+    const hours = Math.min(Math.max(parseInt(q.get('hours') || '6', 10), 1), 8760);
     const d = db();
     let events = [];
     if (d) {
