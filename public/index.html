@@ -845,30 +845,55 @@ function makeLobe(points,region,ctr){
   return mesh
 }
 function lobeSideOf(node,splitReg){ return splitReg.has(node.cluster) ? (node.x<0?'L':'R') : 'W' }
+// Outward face planes of a (non-indexed) convex hull, oriented away from centroid c.
+function facePlanes(geo,c){
+  const pos=geo.attributes.position, planes=[]
+  for(let i=0;i<pos.count;i+=3){
+    const ax=pos.getX(i),ay=pos.getY(i),az=pos.getZ(i)
+    const bx=pos.getX(i+1),by=pos.getY(i+1),bz=pos.getZ(i+1), cx=pos.getX(i+2),cy=pos.getY(i+2),cz=pos.getZ(i+2)
+    let nx=(by-ay)*(cz-az)-(bz-az)*(cy-ay), ny=(bz-az)*(cx-ax)-(bx-ax)*(cz-az), nz=(bx-ax)*(cy-ay)-(by-ay)*(cx-ax)
+    const L=Math.hypot(nx,ny,nz)||1; nx/=L;ny/=L;nz/=L
+    if(nx*(ax-c.x)+ny*(ay-c.y)+nz*(az-c.z)<0){ nx=-nx;ny=-ny;nz=-nz }
+    planes.push(nx,ny,nz, nx*ax+ny*ay+nz*az)
+  }
+  return planes
+}
+// Distance from interior point c along unit dir until the convex hull is exited (min front-facing plane).
+function hullExit(pl,c,dx,dy,dz){
+  let t=Infinity
+  for(let i=0;i<pl.length;i+=4){ const den=pl[i]*dx+pl[i+1]*dy+pl[i+2]*dz
+    if(den>1e-6){ const tt=(pl[i+3]-(pl[i]*c.x+pl[i+1]*c.y+pl[i+2]*c.z))/den; if(tt>0&&tt<t) t=tt } }
+  return t
+}
 async function loadBrainLobes(){
   if(!Graph) return
   try{
     const a=await (await fetch('/api/brain-points')).json()
-    const grp=new THREE.Group(), centroids={}, splitReg=new Set()
+    const grp=new THREE.Group(), centroids={}, planes={}, splitReg=new Set()
     for(const region in a.regions){
       const all=a.regions[region]
       // Split each region at the sagittal midline (x = L-R axis) into hemispheres so the bilateral
       // structure + central fissure read; midline-only regions (too few points one side) stay whole.
       const L=all.filter(p=>p.x<0), R=all.filter(p=>p.x>=0)
       const sides = (Math.min(L.length,R.length)>=HEMI_MIN) ? (splitReg.add(region),[['L',L],['R',R]]) : [['W',all]]
-      for(const [side,pts] of sides){ const c=centroidOf(pts); centroids[region+'|'+side]=c
-        const m=makeLobe(pts,region,c); if(m) grp.add(m) }
+      for(const [side,pts] of sides){ const c=centroidOf(pts); const key=region+'|'+side; centroids[key]=c
+        const m=makeLobe(pts,region,c); if(m){ grp.add(m); planes[key]=facePlanes(m.geometry,c) } }
     }
     Graph.scene().add(grp); window.__lobes=grp
-    // Re-seat agents INTO their lobe: shrink each region-agent toward its own (region,hemisphere)
-    // centroid so it sits inside the translucent lobe rather than on the old un-shrunk hull surface.
-    let moved=0
+    // Re-seat every region-agent so its orb sits INSIDE its lobe: cast a ray from the lobe centroid
+    // through the agent and clamp its distance to 90% of where that ray exits the (shrunk) convex
+    // hull. Centroid ∈ convex hull ⇒ this GUARANTEES containment regardless of the old spiral offset.
+    let moved=0, outside=0
     for(const n of DATA.nodes){
       if(!BRAIN_REGIONS.has(n.cluster)) continue
-      const c=centroids[n.cluster+'|'+lobeSideOf(n,splitReg)]; if(!c) continue
-      n.x=c.x+(n.x-c.x)*AGENT_SHRINK; n.y=c.y+(n.y-c.y)*AGENT_SHRINK; n.z=c.z+(n.z-c.z)*AGENT_SHRINK
-      n.fx=n.x; n.fy=n.y; n.fz=n.z; moved++
+      const key=n.cluster+'|'+lobeSideOf(n,splitReg), c=centroids[key], pl=planes[key]; if(!c||!pl) continue
+      let dx=n.x-c.x, dy=n.y-c.y, dz=n.z-c.z; const r=Math.hypot(dx,dy,dz)||1; dx/=r;dy/=r;dz/=r
+      const texit=hullExit(pl,c,dx,dy,dz)
+      const rr = isFinite(texit) ? Math.min(r, texit*0.90) : r*AGENT_SHRINK
+      if(rr<r-1e-6) outside++
+      n.x=c.x+dx*rr; n.y=c.y+dy*rr; n.z=c.z+dz*rr; n.fx=n.x; n.fy=n.y; n.fz=n.z; moved++
     }
+    window.__lobeContain={moved,clamped:outside}
     if(moved && window.__settled){ syncSprites(); spriteDirtyUntil=performance.now()+600 }
   }catch(e){ console.warn('[brain] lobes failed',e) }
 }
