@@ -215,18 +215,26 @@ import ForceGraph3D from 'https://esm.sh/3d-force-graph@1.73.4?external=three'
 
 const EMBED = new URLSearchParams(location.search).get('embed') === '1'
 if (EMBED) document.body.classList.add('embed')
+// anatomical brain layout: nodes swap to their n.brain coords + pin, cluster becomes the
+// functional region, hubs/queue/state drop out, and a dust point-cloud fills the silhouette.
+const BRAIN = new URLSearchParams(location.search).get('layout') === 'brain'
+const ALL_LABEL = BRAIN ? 'all regions' : 'all pillars'
 
-const CLUSTERS = {
+// Pillar palette (default). In brain mode this is REPLACED by the server-provided region
+// `legend` at init() time (rebuildClusters) — colorOf/isolate/dim/search/clusterTex inherit.
+let CLUSTERS = {
   agents:{label:'AGENTS',color:'#E8A225'}, services:{label:'SERVICES',color:'#ec4899'},
   repos:{label:'REPOS',color:'#06b6d4'}, clients:{label:'CLIENTS',color:'#22c55e'},
   prompts:{label:'PROMPTS',color:'#8b5cf6'}, ops:{label:'OPS',color:'#f97316'},
   queue:{label:'MESSAGES',color:'#eab308'}, state:{label:'STATE',color:'#8A7F6E'},
 }
-const CL = Object.keys(CLUSTERS)
+let CL = Object.keys(CLUSTERS)
 const colorOf = c => (CLUSTERS[c]?.color) || '#fff'
 // pulse color by message type (mirrors MSG_COLORS in collect.js)
 const MSG_COLORS = {escalate:'#ef4444',reply:'#06b6d4',route:'#E8A225',request:'#22c55e',
-  broadcast:'#8b5cf6',status:'#8A7F6E',task:'#eab308',asset_registered:'#22c55e'}
+  broadcast:'#8b5cf6',status:'#8A7F6E',task:'#eab308',asset_registered:'#22c55e',
+  // brain-mode synapse-fire classes (firehose): tool + client work
+  uses_script:'#22d3ee',uses_prompt:'#8b5cf6',client_work:'#22c55e'}
 const pulseColor = t => MSG_COLORS[t] || '#E8A225'
 
 // one shared glow TEXTURE per cluster; each node gets its OWN material (sharing the
@@ -258,7 +266,7 @@ let hoverNode=null, hoverLink=null   // what the cursor is over — drives the c
 const HOVER_SCALE=1.4     // how much a hovered node grows, so it's an obvious click target
 
 function nodeSprite(node){
-  const m=new THREE.SpriteMaterial({map:clusterTex[node.cluster]||clusterTex.state,
+  const m=new THREE.SpriteMaterial({map:clusterTex[node.cluster]||clusterTex.state||Object.values(clusterTex)[0],
     transparent:true,opacity:opacityFor(node),depthWrite:false,blending:THREE.AdditiveBlending})
   const sp=new THREE.Sprite(m)
   const s=baseScale(node); sp.scale.set(s,s,1)
@@ -302,14 +310,24 @@ function linkColorFn(l){
       const r=(232+(255-232)*act)|0, g=(162+(255-162)*act)|0, bl=(37+(235-37)*act)|0
       return `rgba(${r},${g},${bl},${(0.30+act*0.68).toFixed(3)})`
     }
-    return (focusId&&(a===focusId||b===focusId))?'rgba(232,162,37,.75)':'rgba(232,162,37,.32)'
+    // In brain mode the resting comm web recedes so the anatomy reads; active/heated/focused
+    // edges still light up via the branches above. Pillars keep the original weight.
+    // Brain mode: a COLD, unfocused comm edge is fully transparent so the anatomy reads clean
+    // (matches the edge-free silhouette). It reappears the instant it heats (act>0, handled above),
+    // is hovered (handled at top), or its node is focused (the .75 branch here). Pillars unchanged.
+    return (focusId&&(a===focusId||b===focusId))?'rgba(232,162,37,.75)':(BRAIN?'rgba(232,162,37,0)':'rgba(232,162,37,.32)')
   }
+  // structural links (soul=agent→prompt, works_on=agent→repo/client): at rest in brain mode they
+  // span brain→satellite and clutter the silhouette, so hide them unless a node is focused (which
+  // reveals its connections) or the edge is hovered (handled at top). Pillars keep them visible.
+  if(BRAIN && !(focusId&&(a===focusId||b===focusId))) return 'rgba(237,228,211,0)'
   return l.cross?'rgba(232,162,37,.26)':'rgba(237,228,211,.24)'
 }
 function linkWidthFn(l){
   // links are CylinderGeometry meshes (any width>0), so width is in WORLD units, not px.
   // over a ~950u graph, sub-unit widths are invisible — hence the visible skeleton floor below.
-  const base=l.kind==='comm'?Math.min(0.8+Math.log2((l.weight||1)+1)*0.5,3.2):(l.kind==='member'?1.1:0.9)
+  let base=l.kind==='comm'?Math.min(0.8+Math.log2((l.weight||1)+1)*0.5,3.2):(l.kind==='member'?1.1:0.9)
+  if(BRAIN&&l.kind==='comm') base*=0.5   // thinner resting web so the brain silhouette dominates
   const w=base + (l.__act||0)*1.8   // subtle swell; the comet is the primary motion cue
   return l===hoverLink ? w+2.2 : w  // hovered edge swells so it's an obvious click target
 }
@@ -345,7 +363,7 @@ function clearFocus(){
   if(!focusId&&!selected) { applyNodeDim(); refreshLinks(); return }
   focusId=null; neighborSet=null; selected=null; clearLegendActive()
   applyNodeDim(); refreshLinks()
-  rv.textContent='the whole operation'; rp.textContent='all pillars'; rp.style.color='var(--amber)'
+  rv.textContent='the whole operation'; rp.textContent=ALL_LABEL; rp.style.color='var(--amber)'
 }
 function setSelected(c){
   focusId=null; neighborSet=null
@@ -357,7 +375,7 @@ function setSelected(c){
     e.style.background=selected===k?colorOf(k):''; e.style.borderColor=selected===k?colorOf(k):''
   })
   if(selected){ rv.textContent=CLUSTERS[selected].label; rp.textContent=`${DATA.nodes.filter(n=>n.cluster===selected&&n.kind!=='hub').length} nodes`; rp.style.color=colorOf(selected) }
-  else { rv.textContent='the whole operation'; rp.textContent='all pillars'; rp.style.color='var(--amber)' }
+  else { rv.textContent='the whole operation'; rp.textContent=ALL_LABEL; rp.style.color='var(--amber)' }
   refreshLinks()
   post('brain:isolate',{cluster:selected})
 }
@@ -408,9 +426,17 @@ searchEl.addEventListener('input',e=>doSearch(e.target.value))
 searchEl.addEventListener('keydown',e=>{if(e.key==='Enter'){const f=DATA.nodes.find(n=>n.kind!=='hub'&&n.name.toLowerCase().includes(searchEl.value.toLowerCase()));if(f)flyTo(f)}})
 
 function flyTo(n){
-  if(!n)return
-  const d=120,r=Math.hypot(n.x||1,n.y||0,n.z||0)||1,k=1+d/r
-  Graph.cameraPosition({x:(n.x||0)*k,y:(n.y||0)*k,z:(n.z||0)*k},n,1100)
+  if(!n||!Graph)return
+  // Fly to a fixed standoff distance ALONG the current view direction, not by radially
+  // scaling the node's position. The old k=1+d/r math exploded for nodes near the origin
+  // (e.g. thalamus at brain-center, r→0), flinging the camera to infinity. Approaching from
+  // where we already are is layout-agnostic and stable for both pillar and brain modes.
+  const nx=n.x||0, ny=n.y||0, nz=n.z||0, d=120
+  const cam=Graph.camera()
+  let dx=cam.position.x-nx, dy=cam.position.y-ny, dz=cam.position.z-nz
+  let len=Math.hypot(dx,dy,dz); if(len<1e-3){ dx=0; dy=0; dz=1; len=1 } // degenerate: back off +Z
+  dx/=len; dy/=len; dz/=len
+  Graph.cameraPosition({x:nx+dx*d,y:ny+dy*d,z:nz+dz*d},{x:nx,y:ny,z:nz},1100)
   showPanel(n); flashNode(n.id,1.6); focusOn(n)
 }
 
@@ -519,9 +545,16 @@ function animFlashes(now){
       } else p.label.style.display='none'
     }
   }
-  // edge heat decay: fade each active edge over ~1.6s; throttled re-apply so the glow renders
+  // edge heat decay: fade each active edge over ~1.6s; throttled re-apply so the glow renders.
+  // Sustained heat (brain-mode client_work): while now < __heatUntil hold __act at a ~0.5 floor
+  // so the edge stays visibly warm for the duration the client is being worked on, then it
+  // rejoins normal decay. (__heatUntil is an epoch ms sent by the server's link.heat event.)
   let anyAct=false
-  for(const l of DATA.links){ if(l.__act){ l.__act=Math.max(0,l.__act-dt/1600); anyAct=true } }
+  const nowE=Date.now()
+  for(const l of DATA.links){
+    if(l.__heatUntil && nowE<l.__heatUntil){ l.__act=Math.max(l.__act||0,0.5); anyAct=true; continue }
+    if(l.__act){ l.__act=Math.max(0,l.__act-dt/1600); anyAct=true }
+  }
   if(anyAct && now-(animFlashes._lastLink||0)>70){ reapplyLinks(); animFlashes._lastLink=now }
   // WASDQE free-fly movement
   const flying=flyStep(dt)
@@ -704,14 +737,21 @@ function syncSprites(){ for(const n of DATA.nodes) if(n.__obj) n.__obj.position.
 // into a single ball. Pinning makes those graphData() calls layout no-ops. Hubs come pre-pinned.
 function pinNode(n){ if(n&&n.x!=null){ n.fx=n.x; n.fy=n.y; n.fz=n.z } }
 function pinAll(){ for(const n of DATA.nodes) pinNode(n) }
+const BRAIN_REGIONS=new Set(['prefrontal','frontal','motor','parietal','temporal','occipital','cerebellum','brainstem','hippocampus','thalamus'])
 function frameCamera(){
-  const N=DATA.nodes; if(!N.length)return
+  let N=DATA.nodes; if(!N.length)return
+  // In brain mode, frame ONLY the anatomical anchors (not the far satellite rings), so the brain
+  // fills the view and clients/repos/prompts drift to the edges instead of shrinking it face-on.
+  if(BRAIN){ const b=N.filter(n=>BRAIN_REGIONS.has(n.cluster)); if(b.length) N=b }
   let cx=0,cy=0,cz=0; for(const n of N){cx+=n.x||0;cy+=n.y||0;cz+=n.z||0}
   cx/=N.length;cy/=N.length;cz/=N.length
   let R=1; for(const n of N){const d=Math.hypot((n.x||0)-cx,(n.y||0)-cy,(n.z||0)-cz); if(d>R)R=d}
   const fov=(Graph.camera().fov||50)*Math.PI/180
   const dist=(R/Math.sin(fov/2))*1.15
-  Graph.cameraPosition({x:cx,y:cy,z:cz+dist},{x:cx,y:cy,z:cz},900)
+  // pillars: head-on down +Z. brain: oblique lateral (down the L-R axis, lifted, angled anterior)
+  // so the recognizable profile reads immediately; unit-length offset keeps the fit distance.
+  if(BRAIN) Graph.cameraPosition({x:cx+dist*0.86,y:cy+dist*0.32,z:cz+dist*0.38},{x:cx,y:cy,z:cz},900)
+  else Graph.cameraPosition({x:cx,y:cy,z:cz+dist},{x:cx,y:cy,z:cz},900)
 }
 function settleView(){
   syncSprites()
@@ -720,9 +760,66 @@ function settleView(){
   document.getElementById('loader').classList.add('gone')
 }
 
+// ---------- brain mode: swap to anatomical positions + pin, region palette, dust shell ----------
+// Replace the pillar palette with the server-shipped region legend so colorOf/isolate/dim/
+// search/clusterTex all inherit the anatomical regions with zero downstream changes.
+function rebuildClusters(legend){
+  if(!legend) return
+  CLUSTERS={}
+  for(const k in legend) CLUSTERS[k]={label:legend[k].label,color:legend[k].color}
+  CL=Object.keys(CLUSTERS)
+  for(const k of Object.keys(clusterTex)){ clusterTex[k]?.dispose?.(); delete clusterTex[k] }
+  CL.forEach(c=>clusterTex[c]=makeTexture(colorOf(c)))
+}
+// Swap a node onto its anatomical anchor and PIN it (fx/fy/fz). Anchors ARE the layout — if the
+// force engine ran on unpinned nodes it would smear the brain into a ball over its cooldown ticks.
+function applyBrainSwap(n){
+  if(!n||!n.brain) return false
+  n.x=n.brain.x; n.y=n.brain.y; n.z=n.brain.z
+  n.fx=n.x; n.fy=n.y; n.fz=n.z
+  n.cluster=n.brain.region
+  return true
+}
+// Transform the whole snapshot before init() builds the graph: palette, drop brain:null nodes
+// (hubs/queue/state), swap+pin the rest. Links to dropped hubs are cleaned by init()'s existing
+// dangling-endpoint filter. Runs for BOTH boot paths (fetch /api/graph and WS init fallback).
+function applyBrainMode(data){
+  rebuildClusters(data.legend)
+  DATA.nodes=DATA.nodes.filter(n=>n.brain)     // hubs/queue/state carry brain:null → hidden
+  for(const n of DATA.nodes) applyBrainSwap(n)
+  byId=new Map(DATA.nodes.map(n=>[n.id,n]))
+  const lt=document.querySelector('.legend .lg-title'); if(lt) lt.textContent='Regions — click to isolate'
+  const rpEl=document.getElementById('rp'); if(rpEl) rpEl.textContent=ALL_LABEL
+}
+// Dim additive point cloud of the full brain sample → reads as a brain silhouette behind the
+// ~lit agent anchors (7% occupancy alone would not). Added straight to the three.js scene, OUTSIDE
+// three-forcegraph's graph digest, so it never interacts with the link-accessor collapse landmine.
+async function loadBrainDust(){
+  if(!Graph) return
+  try{
+    const a=await (await fetch('/api/brain-points')).json()
+    // Colour each dust point by its region (matches the agent-anchor palette) so the anatomy
+    // reads as a brain — a monochrome cloud does not. Normal (not additive) blending keeps the
+    // region hues true instead of washing dense areas to white.
+    const pos=[], col=[]
+    for(const region in a.regions){
+      const c=new THREE.Color(colorOf(region))
+      for(const p of a.regions[region]){ pos.push(p.x,p.y,p.z); col.push(c.r,c.g,c.b) }
+    }
+    const geo=new THREE.BufferGeometry()
+    geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3))
+    geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3))
+    const mat=new THREE.PointsMaterial({size:3.0,sizeAttenuation:true,vertexColors:true,
+      transparent:true,opacity:0.82,depthWrite:false})
+    const cloud=new THREE.Points(geo,mat); cloud.renderOrder=-1
+    Graph.scene().add(cloud); window.__dust=cloud
+  }catch(e){ console.warn('[brain] dust shell failed',e) }
+}
+
 // ---------- init graph ----------
 function init(data){
   DATA=data; byId=new Map(DATA.nodes.map(n=>[n.id,n]))
+  if(BRAIN) applyBrainMode(data)   // swap+pin all nodes + region palette BEFORE building the graph
   // Drop any link whose source/target node is missing: d3-force THROWS on a dangling
   // endpoint, which aborts the whole link force and makes EVERY connection disappear
   // (nodes still render). Stale comm edges to removed agents are the usual culprit.
@@ -750,7 +847,7 @@ function init(data){
       spriteDirtyUntil=performance.now()+200      // guarantee a render paints the (un)highlight
       el.style.cursor=(n||hoverLink)?'pointer':'grab'
       if(n){rv.textContent=n.name;rp.textContent=n.cluster;rp.style.color=colorOf(n.cluster);post('brain:hover',{id:n.id,name:n.name,cluster:n.cluster})}
-      else if(!selected&&!focusId){rv.textContent='the whole operation';rp.textContent='all pillars';rp.style.color='var(--amber)'}
+      else if(!selected&&!focusId){rv.textContent='the whole operation';rp.textContent=ALL_LABEL;rp.style.color='var(--amber)'}
     })
     .onNodeClick(n=>{ flyTo(n); post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta}) })
     // hovering an edge brightens+thickens it, lights its two endpoint nodes, and shows a tooltip
@@ -834,6 +931,7 @@ function init(data){
   const scene=Graph.scene()
   const key=new THREE.PointLight(0xffeedd,1.5,1200);key.position.set(200,150,100);scene.add(key)
   scene.add(new THREE.AmbientLight(0x403a30,0.7))
+  if(BRAIN) loadBrainDust()   // silhouette point-cloud (outside the forcegraph digest)
 
   window.__brain={Graph,DATA,focusOn,clearFocus,pulseLink,get focusId(){return focusId},get pulses(){return activePulses},get scr(){return scr},applySnapshotAt} // debug handle
   renderLegend()
@@ -858,7 +956,23 @@ function connectWS(){
     if(m.type==='node.flash'){ if(m.kind==='message')return; flashNode(m.id, m.kind==='commit'?1.8:m.kind==='spawn'?2.0:1.2); return }
     if(m.type==='node.update'){ const n=byId.get(m.id); if(n){Object.assign(n,m.patch); if(n.__obj){n.__s=baseScale(n);n.__obj.scale.set(n.__s,n.__s,1)}} return }
     if(m.type==='link.pulse'){ if(scr.live)pulseLink(m.source,m.target,m.kind); return }
-    if(m.type==='node.add'){ if(!byId.has(m.node.id)){DATA.nodes.push(m.node);byId.set(m.node.id,m.node);if(m.link)DATA.links.push(m.link);Graph.graphData(DATA);renderLegend();flashNode(m.node.id,2);setTimeout(()=>pinNode(byId.get(m.node.id)),1600)} return }
+    if(m.type==='link.heat'){ if(scr.live){ const l=commFor(m.source,m.target)||ensureCommLink(m.source,m.target); if(l){ l.__heatUntil=m.until; l.__act=Math.max(l.__act||0,0.5); reapplyLinks() } } return }
+    if(m.type==='node.add'){
+      if(byId.has(m.node.id)) return
+      if(BRAIN){
+        if(!m.node.brain) return                 // hub/queue/state delta — hidden in brain mode
+        applyBrainSwap(m.node)                    // swap onto anatomical anchor + PIN immediately
+        DATA.nodes.push(m.node); byId.set(m.node.id,m.node)
+        // skip m.link: it targets a brain:null hub absent here → a dangling endpoint throws in d3
+        Graph.graphData(DATA); renderLegend(); flashNode(m.node.id,2)
+      }else{
+        DATA.nodes.push(m.node); byId.set(m.node.id,m.node)
+        if(m.link)DATA.links.push(m.link)
+        Graph.graphData(DATA); renderLegend(); flashNode(m.node.id,2)
+        setTimeout(()=>pinNode(byId.get(m.node.id)),1600)  // pillar mode: pin after the sim reseats it
+      }
+      return
+    }
     if(m.type==='node.remove'){ if(byId.has(m.id)){DATA.nodes=DATA.nodes.filter(n=>n.id!==m.id);DATA.links=DATA.links.filter(l=>(l.source.id||l.source)!==m.id&&(l.target.id||l.target)!==m.id);byId.delete(m.id);Graph.graphData(DATA);renderLegend()} return }
     if(m.type==='ticker'){ if(scr.live)ticker(m.text); return }
   }
