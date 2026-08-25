@@ -84,9 +84,11 @@ const server = http.createServer((req, res) => {
     return;
   }
   if (url === '/healthz') { res.writeHead(200); res.end('ok'); return; }
-  // /field is the one canonical page; / redirects to it. everything else -> static file.
+  // Shape routes all serve the one page; the client picks its layout from the path.
+  // Add a new shape here (+ ROUTE_LAYOUT in index.html) to give it its own URL. `/` → default.
+  const SHAPE_ROUTES = new Set(['/field', '/brain']);
   if (url === '/') { res.writeHead(302, { location: '/field' }); res.end(); return; }
-  let file = (url === '/field') ? '/index.html' : url;
+  let file = SHAPE_ROUTES.has(url) ? '/index.html' : url;
   const fp = path.join(PUBLIC, path.normalize(file).replace(/^(\.\.[/\\])+/, ''));
   fs.readFile(fp, (err, data) => {
     if (err) { res.writeHead(404); res.end('not found'); return; }
