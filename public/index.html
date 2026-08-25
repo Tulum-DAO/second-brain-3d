@@ -213,6 +213,7 @@
 <script type="module">
 import * as THREE from 'three'
 import ForceGraph3D from 'https://esm.sh/3d-force-graph@1.73.4?external=three'
+import { ConvexGeometry } from 'https://esm.sh/three@0.183.2/examples/jsm/geometries/ConvexGeometry.js?external=three'
 
 const EMBED = new URLSearchParams(location.search).get('embed') === '1'
 if (EMBED) document.body.classList.add('embed')
@@ -371,13 +372,13 @@ function focusOn(node){
   if(!node||node.kind==='hub'){ clearFocus(); return }
   selected=null; clearLegendActive()
   focusId=node.id; neighborSet=neighborsOf(node.id)
-  applyNodeDim(); refreshLinks()
+  applyNodeDim(); refreshLinks(); refreshLobes()
   rv.textContent=node.name; rp.textContent=`${neighborSet.size-1} connection${neighborSet.size===2?'':'s'}`; rp.style.color=colorOf(node.cluster)
 }
 function clearFocus(){
   if(!focusId&&!selected) { applyNodeDim(); refreshLinks(); return }
   focusId=null; neighborSet=null; selected=null; clearLegendActive()
-  applyNodeDim(); refreshLinks()
+  applyNodeDim(); refreshLinks(); refreshLobes()
   rv.textContent='the whole operation'; rp.textContent=ALL_LABEL; rp.style.color='var(--amber)'
 }
 function setSelected(c){
@@ -391,7 +392,7 @@ function setSelected(c){
   })
   if(selected){ rv.textContent=CLUSTERS[selected].label; rp.textContent=`${DATA.nodes.filter(n=>n.cluster===selected&&n.kind!=='hub').length} nodes`; rp.style.color=colorOf(selected) }
   else { rv.textContent='the whole operation'; rp.textContent=ALL_LABEL; rp.style.color='var(--amber)' }
-  refreshLinks()
+  refreshLinks(); refreshLobes()
   post('brain:isolate',{cluster:selected})
 }
 
@@ -806,29 +807,49 @@ function applyBrainMode(data){
   const lt=document.querySelector('.legend .lg-title'); if(lt) lt.textContent='Regions — click to isolate'
   const rpEl=document.getElementById('rp'); if(rpEl) rpEl.textContent=ALL_LABEL
 }
-// Dim additive point cloud of the full brain sample → reads as a brain silhouette behind the
-// ~lit agent anchors (7% occupancy alone would not). Added straight to the three.js scene, OUTSIDE
-// three-forcegraph's graph digest, so it never interacts with the link-accessor collapse landmine.
-async function loadBrainDust(){
+// Translucent anatomical "lobes": one convex-hull mesh per brain region, region-coloured, with a
+// fresnel rim so each lobe reads as a soft glowing volume rather than a flat shell. Built from the
+// same /api/brain-points cloud and added straight to the scene (outside the forcegraph digest, so
+// no interaction with the link-accessor collapse landmine). Agent anchor sprites sit on top.
+const LOBE_VERT=`
+  varying vec3 vN; varying vec3 vV;
+  void main(){ vec4 wp=modelMatrix*vec4(position,1.0);
+    vN=normalize(mat3(modelMatrix)*normal); vV=normalize(cameraPosition-wp.xyz);
+    gl_Position=projectionMatrix*viewMatrix*wp; }`
+const LOBE_FRAG=`
+  uniform vec3 uColor; uniform float uBody; uniform float uRimPow; uniform float uRimBoost; uniform float uDim;
+  varying vec3 vN; varying vec3 vV;
+  void main(){ float f=pow(1.0-abs(dot(normalize(vN),normalize(vV))),uRimPow);
+    vec3 col=uColor+uColor*f*uRimBoost;
+    float a=(uBody+f*uBody*2.0)*uDim;
+    gl_FragColor=vec4(col,a); }`
+async function loadBrainLobes(){
   if(!Graph) return
   try{
     const a=await (await fetch('/api/brain-points')).json()
-    // Colour each dust point by its region (matches the agent-anchor palette) so the anatomy
-    // reads as a brain — a monochrome cloud does not. Normal (not additive) blending keeps the
-    // region hues true instead of washing dense areas to white.
-    const pos=[], col=[]
+    const grp=new THREE.Group()
     for(const region in a.regions){
-      const c=new THREE.Color(colorOf(region))
-      for(const p of a.regions[region]){ pos.push(p.x,p.y,p.z); col.push(c.r,c.g,c.b) }
+      const pts=a.regions[region].map(p=>new THREE.Vector3(p.x,p.y,p.z))
+      if(pts.length<4) continue
+      let geo; try{ geo=new ConvexGeometry(pts) }catch(e){ continue }  // hull needs ≥4 non-coplanar pts
+      const mat=new THREE.ShaderMaterial({
+        uniforms:{ uColor:{value:new THREE.Color(colorOf(region))},
+          uBody:{value:0.10}, uRimPow:{value:2.2}, uRimBoost:{value:1.4}, uDim:{value:1} },
+        vertexShader:LOBE_VERT, fragmentShader:LOBE_FRAG,
+        transparent:true, depthWrite:false, side:THREE.DoubleSide, blending:THREE.NormalBlending })
+      const mesh=new THREE.Mesh(geo,mat); mesh.renderOrder=-2; mesh.userData.region=region
+      grp.add(mesh)
     }
-    const geo=new THREE.BufferGeometry()
-    geo.setAttribute('position',new THREE.Float32BufferAttribute(pos,3))
-    geo.setAttribute('color',new THREE.Float32BufferAttribute(col,3))
-    const mat=new THREE.PointsMaterial({size:3.0,sizeAttenuation:true,vertexColors:true,
-      transparent:true,opacity:0.82,depthWrite:false})
-    const cloud=new THREE.Points(geo,mat); cloud.renderOrder=-1
-    Graph.scene().add(cloud); window.__dust=cloud
-  }catch(e){ console.warn('[brain] dust shell failed',e) }
+    Graph.scene().add(grp); window.__lobes=grp
+  }catch(e){ console.warn('[brain] lobes failed',e) }
+}
+// Isolate/focus dims the non-selected lobes (mirrors the node/edge dimming). No-op outside brain.
+function refreshLobes(){
+  if(!BRAIN||!window.__lobes) return
+  let hi=null
+  if(selected && BRAIN_REGIONS.has(selected)) hi=selected
+  else if(focusId){ const n=byId.get(focusId); if(n&&BRAIN_REGIONS.has(n.cluster)) hi=n.cluster }
+  for(const m of window.__lobes.children) m.material.uniforms.uDim.value=(!hi||m.userData.region===hi)?1:0.12
 }
 
 // ---------- init graph ----------
@@ -946,7 +967,7 @@ function init(data){
   const scene=Graph.scene()
   const key=new THREE.PointLight(0xffeedd,1.5,1200);key.position.set(200,150,100);scene.add(key)
   scene.add(new THREE.AmbientLight(0x403a30,0.7))
-  if(BRAIN) loadBrainDust()   // silhouette point-cloud (outside the forcegraph digest)
+  if(BRAIN) loadBrainLobes()   // translucent region lobes (outside the forcegraph digest)
 
   window.__brain={Graph,DATA,focusOn,clearFocus,pulseLink,get focusId(){return focusId},get pulses(){return activePulses},get scr(){return scr},applySnapshotAt} // debug handle
   renderLegend()
