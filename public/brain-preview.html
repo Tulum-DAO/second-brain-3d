@@ -1,0 +1,37 @@
+<!doctype html>
+<!-- P1 visual-gate viewer for lib/brain-points.json — throwaway, not linked anywhere -->
+<html><head><meta charset="utf-8"><title>brain-points preview</title>
+<script type="importmap">{"imports":{"three":"https://esm.sh/three@0.183.2"}}</script>
+<style>html,body{margin:0;height:100%;background:#1E1A17;overflow:hidden;font-family:monospace}
+#legend{position:fixed;top:10px;left:10px;color:#EDE4D3;font-size:11px;line-height:1.6}</style>
+</head><body>
+<div id="legend"></div>
+<script type="module">
+import * as THREE from 'three'
+const COLORS={prefrontal:'#E8A225',frontal:'#f5c15c',motor:'#06b6d4',parietal:'#38bdf8',
+  temporal:'#ec4899',occipital:'#8b5cf6',cerebellum:'#22c55e',brainstem:'#f97316',
+  hippocampus:'#eab308',thalamus:'#ef4444'}
+const d=await (await fetch('/brain-points.json')).json()
+const scene=new THREE.Scene(); scene.background=new THREE.Color('#1E1A17')
+const cam=new THREE.PerspectiveCamera(50,innerWidth/innerHeight,1,6000)
+// 3/4 view: front-right-above
+cam.position.set(520,300,620); cam.lookAt(0,0,0)
+const legend=document.getElementById('legend')
+for(const [region,pts] of Object.entries(d.regions)){
+  const g=new THREE.BufferGeometry()
+  const arr=new Float32Array(pts.length*3)
+  pts.forEach((p,i)=>{arr[i*3]=p.x;arr[i*3+1]=p.y;arr[i*3+2]=p.z})
+  g.setAttribute('position',new THREE.BufferAttribute(arr,3))
+  const m=new THREE.PointsMaterial({color:COLORS[region]||'#fff',size:6,transparent:true,opacity:.9})
+  scene.add(new THREE.Points(g,m))
+  legend.innerHTML+=`<span style="color:${COLORS[region]}">●</span> ${region} (${pts.length})<br>`
+}
+const r=new THREE.WebGLRenderer({antialias:true}); r.setSize(innerWidth,innerHeight)
+document.body.appendChild(r.domElement)
+const q=new URLSearchParams(location.search)
+const dist=+q.get('dist')||1100
+const views={side:[dist,80,0], front:[0,80,dist], three:[dist*.7,dist*.35,dist*.6], top:[0,dist,0.01]}
+const v=views[q.get('ax')]
+if(v){ cam.position.set(...v); cam.lookAt(0,0,0); r.render(scene,cam) }
+else { let a=0; (function loop(){a+=0.003; cam.position.set(Math.sin(a)*dist,300,Math.cos(a)*dist); cam.lookAt(0,40,0); r.render(scene,cam); requestAnimationFrame(loop)})() }
+</script></body></html>
