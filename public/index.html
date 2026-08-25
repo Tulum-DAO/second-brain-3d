@@ -165,11 +165,25 @@
     background:var(--amber);box-shadow:0 0 8px rgba(232,162,37,.6);cursor:pointer}
   .layers input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--amber);cursor:pointer}
 
+  /* collapsible panels (Layers, Legend) — click the header to fold on small screens */
+  .panel-head{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;user-select:none}
+  .panel-head .caret{font-size:9px;opacity:.6;transition:transform .2s}
+  .collapsible.collapsed .panel-body{display:none}
+  .collapsible.collapsed .panel-head{margin-bottom:0}
+  .collapsible.collapsed .caret{transform:rotate(-90deg)}
+  .legend .panel-head{justify-content:flex-end}   /* legend is right-aligned; keep caret after the title */
+
   body.embed .topbar,body.embed .hint,body.embed .loader,body.embed .subtitle,body.embed .layers{display:none!important}
 
   @media (max-width:640px){
-    .topbar{left:18px;top:64px}.legend{max-width:60vw;right:16px;bottom:34px}
-    .readout{right:18px;top:20px}.searchwrap input{width:70vw}.panel{width:86vw}
+    .topbar{left:18px;top:60px}
+    .readout{right:16px;top:18px;max-width:52vw}
+    .searchwrap{top:96px}.searchwrap input{width:min(88vw,420px)}
+    .hint{display:none}                              /* keyboard fly hints are irrelevant on touch */
+    /* collapsed-by-default panels stack in the top-right; folded they're just a title bar */
+    .layers{top:132px;right:12px;min-width:0;padding:9px 11px}
+    .legend{top:auto;bottom:64px;right:12px;max-width:66vw}
+    .collapsible .panel-body{max-height:42vh;overflow:auto}
   }
 </style>
 </head>
@@ -199,24 +213,26 @@
   <div class="rp" id="rp" style="color:var(--amber)">all pillars</div>
 </div>
 
-<div class="ui layers" id="layers">
-  <div class="lyr-title">Layers</div>
-  <label data-brainonly><input type="checkbox" data-layer="lobes"> Lobe boundaries</label>
-  <label><input type="checkbox" data-layer="orbs"> Agent orbs</label>
-  <label><input type="checkbox" data-layer="edges"> Edges</label>
-  <label><input type="checkbox" data-layer="glows"> Edge glows</label>
-  <label><input type="checkbox" data-layer="pulses"> Arrow sprites</label>
-  <label><input type="checkbox" data-layer="labels"> Message labels</label>
-  <label><input type="checkbox" data-layer="fx"> Retro FX</label>
-  <div class="lyr-slider" data-brainonly>
-    <div class="lyr-slabel">Collision offset · <span id="lyr-coll-val">2</span></div>
-    <input type="range" id="lyr-coll" min="0" max="30" value="2">
+<div class="ui layers collapsible" id="layers">
+  <div class="lyr-title panel-head" data-collapse="layers">Layers<span class="caret">▾</span></div>
+  <div class="panel-body">
+    <label data-brainonly><input type="checkbox" data-layer="lobes"> Lobe boundaries</label>
+    <label><input type="checkbox" data-layer="orbs"> Agent orbs</label>
+    <label><input type="checkbox" data-layer="edges"> Edges</label>
+    <label><input type="checkbox" data-layer="glows"> Edge glows</label>
+    <label><input type="checkbox" data-layer="pulses"> Arrow sprites</label>
+    <label><input type="checkbox" data-layer="labels"> Message labels</label>
+    <label><input type="checkbox" data-layer="fx"> Retro FX</label>
+    <div class="lyr-slider" data-brainonly>
+      <div class="lyr-slabel">Collision offset · <span id="lyr-coll-val">2</span></div>
+      <input type="range" id="lyr-coll" min="0" max="30" value="2">
+    </div>
   </div>
 </div>
 
-<div class="ui legend">
-  <div class="lg-title">Pillars — click to isolate</div>
-  <div class="rows" id="legend-rows"></div>
+<div class="ui legend collapsible" id="legend">
+  <div class="lg-title panel-head" data-collapse="legend"><span class="ht">Pillars — click to isolate</span><span class="caret">▾</span></div>
+  <div class="panel-body"><div class="rows" id="legend-rows"></div></div>
 </div>
 
 <div class="ui hint">
@@ -855,7 +871,7 @@ function applyBrainMode(data){
   DATA.nodes=DATA.nodes.filter(n=>n.brain)     // hubs/queue/state carry brain:null → hidden
   for(const n of DATA.nodes) applyBrainSwap(n)
   byId=new Map(DATA.nodes.map(n=>[n.id,n]))
-  const lt=document.querySelector('.legend .lg-title'); if(lt) lt.textContent='Regions — click to isolate'
+  const lt=document.querySelector('.legend .lg-title .ht'); if(lt) lt.textContent='Regions — click to isolate'
   const rpEl=document.getElementById('rp'); if(rpEl) rpEl.textContent=ALL_LABEL
 }
 // Translucent anatomical "lobes": one convex-hull mesh per brain region, region-coloured, with a
@@ -995,6 +1011,12 @@ function initLayersMenu(){
   if(coll){ coll.value=collisionOffset; cv.textContent=collisionOffset
     coll.addEventListener('input',()=>{ cv.textContent=coll.value; applyCollision(+coll.value) }) }
   if(!BRAIN) panel.querySelectorAll('[data-brainonly]').forEach(e=>e.style.display='none') // lobes/collision are brain-only
+  // collapsible panels: header toggles fold; default collapsed on phones so menus don't cover the brain
+  const mobile=matchMedia('(max-width:640px)').matches
+  document.querySelectorAll('.panel-head[data-collapse]').forEach(h=>{
+    const box=h.closest('.collapsible'); if(mobile) box.classList.add('collapsed')
+    h.addEventListener('click',()=>box.classList.toggle('collapsed'))
+  })
 }
 // Isolate/focus dims the non-selected lobes (mirrors the node/edge dimming). No-op outside brain.
 function refreshLobes(){
