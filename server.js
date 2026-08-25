@@ -3,6 +3,7 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFile } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import chokidar from 'chokidar';
@@ -20,6 +21,39 @@ try { VERSION = Math.floor(fs.statSync(path.join(PUBLIC, 'index.html')).mtimeMs)
 let graph = buildGraph();
 graph.index = new Map(graph.nodes.map(n => [n.id, n]));
 console.log(`[brain] initial graph: ${graph.nodes.length} nodes, ${graph.links.length} links`, graph.stats);
+
+// ---- lineage map: retired predecessor name -> live-head name, via the CANONICAL batch resolver ----
+// (handoff discipline: attribution goes through lineage_resolve.py, never a re-implementation). Built
+// async from every distinct message participant so restored Apr→Aug history attributes retired gens
+// to their live successors (e.g. gm-gen21 -> gm). Refreshed on agent-sessions change; never per-fire.
+const LINEAGE_CLI = path.join(AO, 'scripts/lineage_resolve.py');
+let lineageMap = new Map();   // normActor(name) -> live-head name (or absent = no live head)
+function refreshLineage() {
+  const d = db(); if (!d) return;
+  let names;
+  try { names = d.prepare(`SELECT DISTINCT from_agent n FROM messages WHERE from_agent IS NOT NULL
+                            UNION SELECT DISTINCT to_agent n FROM messages WHERE to_agent IS NOT NULL`).all().map(r => r.n); }
+  catch { return; }
+  if (!names.length) return;
+  const child = execFile('python3', [LINEAGE_CLI], { maxBuffer: 8 << 20 }, (err, stdout) => {
+    if (err) { console.error('[brain] lineage resolve failed', err.message); return; }
+    try {
+      const map = JSON.parse(stdout), next = new Map();
+      for (const [name, v] of Object.entries(map)) {
+        const head = v && v.session; if (head) next.set(normActor(name), head);
+      }
+      lineageMap = next;
+      console.log(`[brain] lineage map: ${lineageMap.size} retired→live-head mappings`);
+    } catch (e) { console.error('[brain] lineage parse failed', e.message); }
+  });
+  try { child.stdin.end(names.join('\n')); } catch {}
+}
+// Resolve a message participant to a current graph node id, following lineage to the live head.
+function resolveHistoric(name) {
+  const direct = resolveActorId(name, graph); if (direct) return direct;
+  const head = lineageMap.get(normActor(name)); return head ? resolveActorId(head, graph) : null;
+}
+refreshLineage();
 
 // ---- static + json http server ----
 const MIME = { '.html':'text/html', '.js':'text/javascript', '.css':'text/css',
@@ -74,9 +108,9 @@ const server = http.createServer((req, res) => {
         const rows = d.prepare(
           `SELECT id, from_agent, to_agent, type, subject, created_at
              FROM messages WHERE created_at > datetime('now', ?) AND to_agent IS NOT NULL
-             ORDER BY created_at ASC LIMIT 4000`).all(`-${hours} hour`);
+             ORDER BY created_at ASC LIMIT 20000`).all(`-${hours} hour`);
         for (const m of rows) {
-          const from = resolveActorId(m.from_agent, graph), to = resolveActorId(m.to_agent, graph);
+          const from = resolveHistoric(m.from_agent), to = resolveHistoric(m.to_agent);
           if (!from || !to) continue;
           events.push({ t: m.created_at, from, to, type: m.type,
             fromName: normActor(m.from_agent), toName: normActor(m.to_agent),
@@ -260,7 +294,7 @@ chokidar.watch([
 ], { ignoreInitial: true })
   .on('change', () => {
     clearTimeout(rebuildTimer);
-    rebuildTimer = setTimeout(reconcile, 1500);
+    rebuildTimer = setTimeout(() => { reconcile(); refreshLineage(); }, 1500);   // lineage heads may have rotated
   });
 
 // full reconcile: rebuild graph, diff, broadcast add/remove
