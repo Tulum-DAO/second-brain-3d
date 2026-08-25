@@ -213,7 +213,6 @@
 <script type="module">
 import * as THREE from 'three'
 import ForceGraph3D from 'https://esm.sh/3d-force-graph@1.73.4?external=three'
-import { ConvexGeometry } from 'https://esm.sh/three@0.183.2/examples/jsm/geometries/ConvexGeometry.js?external=three'
 
 const EMBED = new URLSearchParams(location.search).get('embed') === '1'
 if (EMBED) document.body.classList.add('embed')
@@ -823,39 +822,77 @@ const LOBE_FRAG=`
     vec3 col=uColor+uColor*f*uRimBoost;
     float a=(uBody+f*uBody*2.0)*uDim;
     gl_FragColor=vec4(col,a); }`
-const LOBE_SHRINK=0.85   // pull each hull toward its own centroid → gaps between lobes read as distinct surfaces
-function makeLobe(points,region){
-  if(points.length<4) return null
-  let geo; try{ geo=new ConvexGeometry(points.map(p=>new THREE.Vector3(p.x,p.y,p.z))) }catch(e){ return null }
-  // shrink toward centroid so neighbouring regions/hemispheres separate instead of interpenetrating
-  const pos=geo.attributes.position; let cx=0,cy=0,cz=0
-  for(let i=0;i<pos.count;i++){ cx+=pos.getX(i); cy+=pos.getY(i); cz+=pos.getZ(i) }
-  cx/=pos.count; cy/=pos.count; cz/=pos.count
-  for(let i=0;i<pos.count;i++){ pos.setXYZ(i, cx+(pos.getX(i)-cx)*LOBE_SHRINK, cy+(pos.getY(i)-cy)*LOBE_SHRINK, cz+(pos.getZ(i)-cz)*LOBE_SHRINK) }
+const LOBE_K=1.4          // ellipsoid semi-axes = K·std along each principal axis (size / overlap control)
+const AGENT_SHRINK=0.66   // pull each region-agent toward its lobe centroid → orbs sit INSIDE the lobe
+const HEMI_MIN=12         // min points per side to treat a region as bilateral (else it stays midline-whole)
+function centroidOf(pts){ let x=0,y=0,z=0; for(const p of pts){x+=p.x;y+=p.y;z+=p.z} const n=pts.length||1; return {x:x/n,y:y/n,z:z/n} }
+// Jacobi eigen-decomposition of a symmetric 3x3 (packed [c00,c01,c02,c11,c12,c22]) → principal axes.
+function eigenSym3(m){
+  let a=[[m[0],m[1],m[2]],[m[1],m[3],m[4]],[m[2],m[4],m[5]]], V=[[1,0,0],[0,1,0],[0,0,1]]
+  for(let it=0;it<32;it++){
+    let p=0,q=1,mx=Math.abs(a[0][1])
+    if(Math.abs(a[0][2])>mx){mx=Math.abs(a[0][2]);p=0;q=2}
+    if(Math.abs(a[1][2])>mx){mx=Math.abs(a[1][2]);p=1;q=2}
+    if(mx<1e-9) break
+    const phi=0.5*Math.atan2(2*a[p][q], a[q][q]-a[p][p]), c=Math.cos(phi), s=Math.sin(phi)
+    for(let i=0;i<3;i++){ const aip=a[i][p],aiq=a[i][q]; a[i][p]=c*aip-s*aiq; a[i][q]=s*aip+c*aiq }
+    for(let i=0;i<3;i++){ const api=a[p][i],aqi=a[q][i]; a[p][i]=c*api-s*aqi; a[q][i]=s*api+c*aqi }
+    for(let i=0;i<3;i++){ const vip=V[i][p],viq=V[i][q]; V[i][p]=c*vip-s*viq; V[i][q]=s*vip+c*viq }
+  }
+  return {values:[a[0][0],a[1][1],a[2][2]], vectors:V}
+}
+// One smooth ellipsoid per region-hemisphere, sized + ORIENTED to the point cloud's principal axes →
+// rounded anatomical lobes with no facets and no self-intersection. Scale is baked into the geometry
+// so the model matrix is a pure rotation+translation and the fresnel normals stay correct.
+function makeLobe(points,region,ctr){
+  if(points.length<8) return null
+  let c00=0,c01=0,c02=0,c11=0,c12=0,c22=0
+  for(const p of points){ const dx=p.x-ctr.x,dy=p.y-ctr.y,dz=p.z-ctr.z
+    c00+=dx*dx;c01+=dx*dy;c02+=dx*dz;c11+=dy*dy;c12+=dy*dz;c22+=dz*dz }
+  const n=points.length, {values,vectors}=eigenSym3([c00/n,c01/n,c02/n,c11/n,c12/n,c22/n])
+  const ax=LOBE_K*Math.sqrt(Math.max(values[0],1)), ay=LOBE_K*Math.sqrt(Math.max(values[1],1)), az=LOBE_K*Math.sqrt(Math.max(values[2],1))
+  const geo=new THREE.SphereGeometry(1,28,18), pos=geo.attributes.position
+  for(let i=0;i<pos.count;i++) pos.setXYZ(i, pos.getX(i)*ax, pos.getY(i)*ay, pos.getZ(i)*az)
   pos.needsUpdate=true; geo.computeVertexNormals()
   const mat=new THREE.ShaderMaterial({
     uniforms:{ uColor:{value:new THREE.Color(colorOf(region))},
       uBody:{value:0.12}, uRimPow:{value:2.0}, uRimBoost:{value:1.7}, uDim:{value:1} },
     vertexShader:LOBE_VERT, fragmentShader:LOBE_FRAG,
     transparent:true, depthWrite:false, side:THREE.DoubleSide, blending:THREE.NormalBlending })
-  const mesh=new THREE.Mesh(geo,mat); mesh.renderOrder=-2; mesh.userData.region=region
+  const mesh=new THREE.Mesh(geo,mat)
+  mesh.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(
+    new THREE.Vector3(vectors[0][0],vectors[1][0],vectors[2][0]),
+    new THREE.Vector3(vectors[0][1],vectors[1][1],vectors[2][1]),
+    new THREE.Vector3(vectors[0][2],vectors[1][2],vectors[2][2])))
+  mesh.position.set(ctr.x,ctr.y,ctr.z); mesh.renderOrder=-2; mesh.userData.region=region
   return mesh
 }
+function lobeSideOf(node,splitReg){ return splitReg.has(node.cluster) ? (node.x<0?'L':'R') : 'W' }
 async function loadBrainLobes(){
   if(!Graph) return
   try{
     const a=await (await fetch('/api/brain-points')).json()
-    const grp=new THREE.Group()
+    const grp=new THREE.Group(), centroids={}, splitReg=new Set()
     for(const region in a.regions){
       const all=a.regions[region]
-      // Split each region at the sagittal midline (x = left-right axis) into hemispheres, so the
-      // brain's bilateral structure + the central fissure read. Truly-midline regions (too few
-      // points on one side) stay whole. Two hemisphere hulls also overlap far less than one big one.
+      // Split each region at the sagittal midline (x = L-R axis) into hemispheres so the bilateral
+      // structure + central fissure read; midline-only regions (too few points one side) stay whole.
       const L=all.filter(p=>p.x<0), R=all.filter(p=>p.x>=0)
-      const sides=(Math.min(L.length,R.length)>=12) ? [L,R] : [all]
-      for(const side of sides){ const m=makeLobe(side,region); if(m) grp.add(m) }
+      const sides = (Math.min(L.length,R.length)>=HEMI_MIN) ? (splitReg.add(region),[['L',L],['R',R]]) : [['W',all]]
+      for(const [side,pts] of sides){ const c=centroidOf(pts); centroids[region+'|'+side]=c
+        const m=makeLobe(pts,region,c); if(m) grp.add(m) }
     }
     Graph.scene().add(grp); window.__lobes=grp
+    // Re-seat agents INTO their lobe: shrink each region-agent toward its own (region,hemisphere)
+    // centroid so it sits inside the translucent lobe rather than on the old un-shrunk hull surface.
+    let moved=0
+    for(const n of DATA.nodes){
+      if(!BRAIN_REGIONS.has(n.cluster)) continue
+      const c=centroids[n.cluster+'|'+lobeSideOf(n,splitReg)]; if(!c) continue
+      n.x=c.x+(n.x-c.x)*AGENT_SHRINK; n.y=c.y+(n.y-c.y)*AGENT_SHRINK; n.z=c.z+(n.z-c.z)*AGENT_SHRINK
+      n.fx=n.x; n.fy=n.y; n.fz=n.z; moved++
+    }
+    if(moved && window.__settled){ syncSprites(); spriteDirtyUntil=performance.now()+600 }
   }catch(e){ console.warn('[brain] lobes failed',e) }
 }
 // Isolate/focus dims the non-selected lobes (mirrors the node/edge dimming). No-op outside brain.
