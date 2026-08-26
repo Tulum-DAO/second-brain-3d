@@ -184,6 +184,37 @@
 
   body.embed .topbar,body.embed .hint,body.embed .loader,body.embed .subtitle,body.embed .layers{display:none!important}
 
+  /* ---- CONSOLE (/console) — iOS-app surface: strip desktop fluff, finger-first ---- */
+  body.console .eyebrow,body.console .subtitle,body.console .hint,body.console .readout,
+  body.console .ticker,body.console .loader{display:none!important}
+  body.console .title{font-size:20px;opacity:.9}
+  body.console .topbar{top:16px;left:16px}
+  body.console .orbit-btn{margin-top:10px}
+  /* live activity feed — bottom sheet that's always streaming, independent of node/edge taps */
+  .feed{position:fixed;left:0;right:0;bottom:0;z-index:15;background:rgba(12,10,8,.96);
+    border-top:1px solid var(--line);backdrop-filter:blur(8px);transform:translateY(calc(100% - 42px));
+    transition:transform .32s cubic-bezier(.4,0,.2,1);pointer-events:auto;max-height:72vh;display:flex;flex-direction:column}
+  .feed.open{transform:translateY(0)}
+  body:not(.console) .feed{display:none}
+  .feed-head{height:42px;flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:0 16px;cursor:pointer;user-select:none}
+  .feed-head .fh-dot{width:7px;height:7px;border-radius:50%;background:#22c55e;box-shadow:0 0 8px #22c55e;animation:beat 1.6s ease-in-out infinite;flex:0 0 auto}
+  .feed-head .fh-title{font-size:11px;letter-spacing:.24em;text-transform:uppercase;color:var(--cream)}
+  .feed-head .fh-count{font-size:9px;letter-spacing:.14em;color:var(--muted);margin-left:auto}
+  .feed-head .fh-caret{font-size:10px;color:var(--muted);transition:transform .3s}
+  .feed.open .fh-caret{transform:rotate(180deg)}
+  .feed-list{flex:1 1 auto;overflow-y:auto;-webkit-overflow-scrolling:touch;padding:4px 0 12px}
+  .fi{display:flex;gap:10px;padding:9px 16px;border-top:1px solid rgba(237,228,211,.05)}
+  .fi .fi-rail{width:3px;flex:0 0 auto;border-radius:2px;background:var(--amber)}
+  .fi .fi-main{min-width:0;flex:1}
+  .fi .fi-top{display:flex;gap:8px;align-items:baseline}
+  .fi .fi-cat{font-size:8px;letter-spacing:.16em;text-transform:uppercase;padding:2px 6px;border-radius:3px;flex:0 0 auto}
+  .fi .fi-who{font-size:11px;color:var(--cream);letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fi .fi-who b{color:var(--amber);font-weight:500}
+  .fi .fi-time{font-size:9px;color:var(--muted);margin-left:auto;flex:0 0 auto}
+  .fi .fi-title{font-size:11px;color:var(--muted);line-height:1.45;margin-top:3px;
+    display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+  .fi.attn{background:rgba(232,162,37,.05)}
+
   @media (max-width:640px){
     .topbar{left:18px;top:60px}
     .readout{right:16px;top:18px;max-width:52vw}
@@ -272,6 +303,14 @@
 <div class="msgpanel" id="msgpanel"></div>
 <div class="ticker" id="ticker"></div>
 
+<div class="feed" id="feed">
+  <div class="feed-head" id="feed-head">
+    <span class="fh-dot"></span><span class="fh-title">Activity</span>
+    <span class="fh-count" id="feed-count"></span><span class="fh-caret">▲</span>
+  </div>
+  <div class="feed-list" id="feed-list"></div>
+</div>
+
 <div class="scrubber" id="scrubber">
   <button class="scr-btn" id="scr-toggle" title="play / pause replay">▶</button>
   <button class="scr-btn" id="scr-live" title="jump to live">LIVE</button>
@@ -300,7 +339,11 @@ if (EMBED) document.body.classList.add('embed')
 // differs. Shapes get a clean route each (/field=pillars, /brain=brain, future /orbits …); the
 // ?layout= query still works as an override for embeds where the path may be fixed.
 const KNOWN_LAYOUTS = new Set(['pillars','brain'])
-const ROUTE_LAYOUT = { field:'pillars', brain:'brain' }   // path segment → layout name
+const ROUTE_LAYOUT = { field:'pillars', brain:'brain', console:'brain' }   // path segment → layout name
+// CONSOLE mode (/console): the iOS-app surface — brain layout, desktop fluff stripped, finger-first
+// hitboxes, and a live activity-feed drawer. Derived from the path so it's a distinct URL.
+const CONSOLE = location.pathname.replace(/^\/+|\/+$/g,'').split('/')[0] === 'console'
+if (CONSOLE) document.body.classList.add('console')
 function resolveLayout(){
   const q = new URLSearchParams(location.search).get('layout')
   if(q && KNOWN_LAYOUTS.has(q)) return q
@@ -1024,6 +1067,61 @@ async function loadBrainLobes(){
   }catch(e){ console.warn('[brain] lobes failed',e) }
 }
 const kick=()=>{ spriteDirtyUntil=performance.now()+350 }   // force the render loop to paint a few frames
+
+// ---------- console live activity feed (bottom sheet) ----------
+// Continuously-updated running log of inter-agent messages + approvals/decisions/menus/questionnaires/
+// human-blockers. Seeded from /api/feed, then appended live from WS `feed.item`. Console mode only.
+const FEED_CAT={
+  message:      {label:'MSG',   color:'#8A7F6E'},
+  approval:     {label:'APPROVE',color:'#E8A225'},
+  menu:         {label:'MENU',  color:'#06b6d4'},
+  questionnaire:{label:'FORM',  color:'#8b5cf6'},
+  human_block:  {label:'BLOCK', color:'#ef4444'},
+}
+const feedSeen=new Set(); let feedItems=[]
+const FEED_MAX=200
+function fmtFeedTime(iso){ try{ const d=new Date(iso), now=Date.now(), s=(now-d)/1000
+  if(s<60)return'now'; if(s<3600)return Math.floor(s/60)+'m'; if(s<86400)return Math.floor(s/3600)+'h'
+  return d.toLocaleDateString([],{month:'short',day:'numeric'}) }catch{return''} }
+function feedRow(it){
+  const c=FEED_CAT[it.cat]||FEED_CAT.message, attn=(it.cat!=='message')
+  const who = it.cat==='message'
+    ? `<b>${esc(it.from||'?')}</b> → ${esc(it.to||'?')}`
+    : `<b>${esc(it.from||'?')}</b> · ${esc(it.feature||it.type||'')}`
+  return `<div class="fi${attn?' attn':''}">
+    <div class="fi-rail" style="background:${c.color}"></div>
+    <div class="fi-main">
+      <div class="fi-top">
+        <span class="fi-cat" style="background:${c.color}22;color:${c.color}">${c.label}</span>
+        <span class="fi-who">${who}</span>
+        <span class="fi-time">${fmtFeedTime(it.t)}</span>
+      </div>
+      <div class="fi-title">${esc(it.title||it.type||'')}</div>
+    </div></div>`
+}
+function renderFeed(){
+  const list=document.getElementById('feed-list'); if(!list) return
+  list.innerHTML=feedItems.map(feedRow).join('')
+  const cnt=document.getElementById('feed-count'); if(cnt) cnt.textContent=feedItems.length+' events'
+}
+function addFeedItem(it,prepend){
+  if(!it||!it.id||feedSeen.has(it.id)) return
+  feedSeen.add(it.id)
+  if(prepend) feedItems.unshift(it); else feedItems.push(it)
+  feedItems.sort((a,b)=> a.t<b.t?1:a.t>b.t?-1:0)
+  if(feedItems.length>FEED_MAX){ feedItems.slice(FEED_MAX).forEach(x=>feedSeen.delete(x.id)); feedItems=feedItems.slice(0,FEED_MAX) }
+}
+async function initFeed(){
+  if(!CONSOLE) return
+  const head=document.getElementById('feed-head'), sheet=document.getElementById('feed')
+  head.addEventListener('click',()=>sheet.classList.toggle('open'))
+  try{
+    const d=await (await fetch('/api/feed?limit=120')).json()
+    for(const it of (d.items||[])) addFeedItem(it,false)
+    renderFeed()
+  }catch(e){ console.warn('[feed] load failed',e) }
+  sheet.classList.add('open')   // start open on the console surface
+}
 // Client-side collision avoidance: from each orb's seeded position, push same-lobe orbs apart until
 // they're at least (rA+rB+offset) apart, then re-clamp every orb inside its convex hull. Live-tunable
 // via the top-right slider. Starts from the seed each call so lowering the offset relaxes correctly.
@@ -1122,7 +1220,8 @@ function init(data){
       if(n){rv.textContent=n.name;rp.textContent=n.cluster;rp.style.color=colorOf(n.cluster);post('brain:hover',{id:n.id,name:n.name,cluster:n.cluster})}
       else if(!selected&&!focusId){rv.textContent='the whole operation';rp.textContent=ALL_LABEL;rp.style.color='var(--amber)'}
     })
-    .onNodeClick(n=>{ flyTo(n); post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta}) })
+    .onNodeClick(n=>{ if(CONSOLE) return   // console: our screen-space picker owns selection (avoids double-fire with the click raycast)
+      flyTo(n); post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta}) })
     // hovering an edge brightens+thickens it, lights its two endpoint nodes, and shows a tooltip
     // naming both agents — so you can tell what you're about to click. reapplyLinks() restyles via
     // the accessor fns, so this works for every current AND future edge automatically.
@@ -1139,9 +1238,11 @@ function init(data){
       const kind=l.kind==='comm'?(l.weight?`${l.weight} message${l.weight===1?'':'s'}`:'messages'):(l.kind==='member'?'member of':'link')
       return `<div style="font-family:'Azeret Mono',monospace;font-size:12px;background:rgba(10,8,6,.94);padding:8px 12px;border-radius:6px;line-height:1.5;border:1px solid rgba(237,228,211,.16)"><div><span style="color:${colorOf(a.cluster)}">${a.name}</span> <span style="color:var(--amber)">⇄</span> <span style="color:${colorOf(b.cluster)}">${b.name}</span></div><div style="opacity:.55;font-size:9px;letter-spacing:.14em;margin-top:3px;text-transform:uppercase">${kind}</div></div>`
     })
-    .onLinkClick(l=>{ const a=l.source.id||l.source,b=l.target.id||l.target
+    .onLinkClick(l=>{ if(CONSOLE) return   // console: screen-space picker owns edge selection
+      const a=l.source.id||l.source,b=l.target.id||l.target
       if(l.kind==='comm'||l.kind==='member'||l.__new) inspectEdge(a,b) })
-    .onBackgroundClick(()=>{ clearFocus(); panel.classList.remove('on'); msgpanel.classList.remove('on'); Graph.zoomToFit(900,80) })
+    .onBackgroundClick(()=>{ if(CONSOLE) return   // console taps rarely hit exact geometry; our screen-space picker owns selection + panels have their own close button
+      clearFocus(); panel.classList.remove('on'); msgpanel.classList.remove('on'); Graph.zoomToFit(900,80) })
 
   // force tuning: strong repulsion + short member springs spread the pillars apart;
   // weak comm springs so cross-cluster edges don't yank everything into a ball.
@@ -1201,6 +1302,48 @@ function init(data){
     }
   },true)
 
+  // ---- CONSOLE finger hitboxes: screen-space tap picker ----
+  // 3d-force-graph raycasts against the exact orb/edge geometry — too small for a fingertip. Instead
+  // we hit-test in screen space with generous pixel radii and fire the SAME actions (orb → left panel
+  // via flyTo; edge → right msgpanel via inspectEdge). Non-invasive: never touches the 3D object model
+  // or the digest landmine. A tap = pointerdown+up, small move, short duration (a drag is left to orbit).
+  if(CONSOLE){
+    const NODE_R=30, EDGE_R=20     // fingertip pick radii in CSS px
+    const project=(x,y,z)=>{ const v=new THREE.Vector3(x,y,z).project(Graph.camera())
+      if(v.z>=1) return null; const rect=el.getBoundingClientRect()
+      return {x:(v.x*0.5+0.5)*rect.width+rect.left, y:(-v.y*0.5+0.5)*rect.height+rect.top} }
+    function pickNode(px,py){
+      let best=null,bd=NODE_R*NODE_R
+      for(const n of DATA.nodes){ if(n.x==null||(n.__obj&&!n.__obj.visible)) continue
+        const s=project(n.x,n.y,n.z); if(!s) continue
+        const d=(s.x-px)**2+(s.y-py)**2; if(d<bd){bd=d;best=n} }
+      return best
+    }
+    function pickEdge(px,py){
+      if(!LAYERS.edges) return null
+      let best=null,bd=EDGE_R*EDGE_R
+      for(const l of DATA.links){ const a=byId.get(l.source.id||l.source), b=byId.get(l.target.id||l.target)
+        if(!a||!b||a.x==null||b.x==null) continue
+        const pa=project(a.x,a.y,a.z), pb=project(b.x,b.y,b.z); if(!pa||!pb) continue
+        // distance from tap to the screen-space segment pa→pb
+        const vx=pb.x-pa.x, vy=pb.y-pa.y, L2=vx*vx+vy*vy||1
+        let t=((px-pa.x)*vx+(py-pa.y)*vy)/L2; t=Math.max(0,Math.min(1,t))
+        const cx=pa.x+t*vx, cy=pa.y+t*vy, d=(cx-px)**2+(cy-py)**2
+        if(d<bd){bd=d;best={a:a.id,b:b.id}} }
+      return best
+    }
+    let tap=null
+    canvas.addEventListener('pointerdown',ev=>{ tap={x:ev.clientX,y:ev.clientY,t:performance.now()} },true)
+    canvas.addEventListener('pointerup',ev=>{
+      if(!tap) return; const moved=Math.hypot(ev.clientX-tap.x,ev.clientY-tap.y), dur=performance.now()-tap.t; tap=null
+      if(moved>14||dur>600) return                 // that was a drag/orbit, not a tap
+      const n=pickNode(ev.clientX,ev.clientY)       // orbs win over edges
+      if(n){ flyTo(n); post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta}); return }
+      const e=pickEdge(ev.clientX,ev.clientY)
+      if(e){ inspectEdge(e.a,e.b) }
+    })
+  }
+
   const scene=Graph.scene()
   // Cap the WebGL drawing-buffer resolution on phones (iPhones report DPR 3) — a smaller buffer
   // sharply cuts GPU memory, the main lever against iOS Safari's "problem repeatedly occurred" OOM.
@@ -1211,7 +1354,7 @@ function init(data){
   if(BRAIN) loadBrainLobes()   // translucent region lobes (outside the forcegraph digest)
 
   window.__brain={Graph,DATA,focusOn,clearFocus,pulseLink,get focusId(){return focusId},get pulses(){return activePulses},get scr(){return scr},applySnapshotAt} // debug handle
-  renderLegend(); initLayersMenu()
+  renderLegend(); initLayersMenu(); initFeed()
   const st=data.stats
   document.getElementById('subtitle').innerHTML=`<b>${st.agents}</b> agents · <b>${st.repos}</b> repos · <b>${st.clients}</b> clients · <b>${st.live}</b> live · <b>${st.commEdges||0}</b> comm-edges · <b>${st.msgs24h||0}</b> msgs/24h`
   // loader stays up while the sim settles (hidden by onEngineStop); fallback in case it never stops
@@ -1252,6 +1395,7 @@ function connectWS(){
     }
     if(m.type==='node.remove'){ if(byId.has(m.id)){DATA.nodes=DATA.nodes.filter(n=>n.id!==m.id);DATA.links=DATA.links.filter(l=>(l.source.id||l.source)!==m.id&&(l.target.id||l.target)!==m.id);byId.delete(m.id);Graph.graphData(DATA);renderLegend()} return }
     if(m.type==='ticker'){ if(scr.live)ticker(m.text); return }
+    if(m.type==='feed.item'){ if(CONSOLE){ addFeedItem(m.item,true); renderFeed() } return }
   }
   ws.onclose=()=>setTimeout(connectWS,2500)
   ws.onerror=()=>ws.close()

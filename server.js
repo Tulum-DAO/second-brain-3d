@@ -133,6 +133,48 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ hours, count: events.length, events }));
     return;
   }
+  // unified live activity feed for the /console surface: recent inter-agent messages PLUS
+  // approvals/decisions/menus/questionnaires/human-blockers — one time-sorted stream. Read-only.
+  if (url === '/api/feed') {
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    const limit = Math.min(Math.max(parseInt(q.get('limit') || '80', 10), 1), 300);
+    const d = db();
+    const items = [];
+    if (d) {
+      try {
+        for (const m of d.prepare(
+          `SELECT id, from_agent, to_agent, type, subject, created_at FROM messages
+             WHERE to_agent IS NOT NULL ORDER BY created_at DESC LIMIT ?`).all(limit)) {
+          if (isMutedMessage(m)) continue;
+          items.push({ cat: 'message', id: 'm' + m.id, t: m.created_at, type: m.type,
+            from: normActor(m.from_agent), to: normActor(m.to_agent), title: (m.subject || '').slice(0, 140) });
+        }
+      } catch {}
+      try {
+        for (const a of d.prepare(
+          `SELECT id, from_agent, question, kind, status, feature, risk_level, created_at
+             FROM approval_requests ORDER BY created_at DESC LIMIT ?`).all(limit)) {
+          const cat = a.kind === 'human_task' ? 'human_block' : (a.kind === 'menu' ? 'menu' : 'approval');
+          items.push({ cat, id: 'a' + a.id, t: a.created_at, type: a.kind || 'approval', status: a.status,
+            from: normActor(a.from_agent), to: 'shaw', feature: a.feature, risk: a.risk_level,
+            title: (a.question || '').slice(0, 200) });
+        }
+      } catch {}
+      try {
+        for (const qn of d.prepare(
+          `SELECT id, from_agent, title, feature, status, question_count, created_at
+             FROM questionnaires ORDER BY created_at DESC LIMIT ?`).all(limit)) {
+          items.push({ cat: 'questionnaire', id: 'q' + qn.id, t: qn.created_at, type: 'questionnaire',
+            status: qn.status, from: normActor(qn.from_agent), to: 'shaw', feature: qn.feature,
+            title: (qn.title || '') + (qn.question_count ? ` · ${qn.question_count} questions` : '') });
+        }
+      } catch {}
+    }
+    items.sort((x, y) => x.t < y.t ? 1 : x.t > y.t ? -1 : 0);   // newest first
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify({ count: items.length, items: items.slice(0, limit) }));
+    return;
+  }
   // inspect an edge: recent messages between two actors (either direction)
   if (url === '/api/messages') {
     const q = new URLSearchParams(req.url.split('?')[1] || '');
@@ -157,7 +199,7 @@ const server = http.createServer((req, res) => {
   if (url === '/healthz') { res.writeHead(200); res.end('ok'); return; }
   // Shape routes all serve the one page; the client picks its layout from the path.
   // Add a new shape here (+ ROUTE_LAYOUT in index.html) to give it its own URL. `/` → default.
-  const SHAPE_ROUTES = new Set(['/field', '/brain']);
+  const SHAPE_ROUTES = new Set(['/field', '/brain', '/console']);
   if (url === '/') { res.writeHead(302, { location: '/field' }); res.end(); return; }
   let file = SHAPE_ROUTES.has(url) ? '/index.html' : url;
   const fp = path.join(PUBLIC, path.normalize(file).replace(/^(\.\.[/\\])+/, ''));
@@ -280,8 +322,40 @@ setInterval(() => {
     else if (to) pulse('queue:bus', to, m.type || 'message');
     broadcast({ type: 'ticker',
       text: `${normActor(m.from_agent)||'?'} → ${normActor(m.to_agent)||'?'} · ${m.type||'msg'}${m.subject?': '+m.subject.slice(0,48):''}` });
+    broadcast({ type: 'feed.item', item: { cat: 'message', id: 'm' + m.id, t: m.created_at, type: m.type,
+      from: normActor(m.from_agent), to: normActor(m.to_agent), title: (m.subject || '').slice(0, 140) } });
   }
 }, 2000);
+
+// approvals + questionnaires → push new ones to the /console live feed (decisions/menus/blockers).
+let lastAprSeen = null, lastQnrSeen = null;
+(function initFeedCursors() {
+  const d = db(); if (!d) return;
+  try { lastAprSeen = d.prepare(`SELECT max(created_at) m FROM approval_requests`).get().m || null; } catch {}
+  try { lastQnrSeen = d.prepare(`SELECT max(created_at) m FROM questionnaires`).get().m || null; } catch {}
+})();
+setInterval(() => {
+  const d = db(); if (!d) return;
+  try {
+    for (const a of d.prepare(`SELECT id, from_agent, question, kind, status, feature, risk_level, created_at
+        FROM approval_requests WHERE created_at > ? ORDER BY created_at ASC LIMIT 50`).all(lastAprSeen || '1970-01-01')) {
+      lastAprSeen = a.created_at;
+      const cat = a.kind === 'human_task' ? 'human_block' : (a.kind === 'menu' ? 'menu' : 'approval');
+      broadcast({ type: 'feed.item', item: { cat, id: 'a' + a.id, t: a.created_at, type: a.kind || 'approval',
+        status: a.status, from: normActor(a.from_agent), to: 'shaw', feature: a.feature, risk: a.risk_level,
+        title: (a.question || '').slice(0, 200) } });
+    }
+  } catch {}
+  try {
+    for (const qn of d.prepare(`SELECT id, from_agent, title, feature, status, question_count, created_at
+        FROM questionnaires WHERE created_at > ? ORDER BY created_at ASC LIMIT 50`).all(lastQnrSeen || '1970-01-01')) {
+      lastQnrSeen = qn.created_at;
+      broadcast({ type: 'feed.item', item: { cat: 'questionnaire', id: 'q' + qn.id, t: qn.created_at,
+        type: 'questionnaire', status: qn.status, from: normActor(qn.from_agent), to: 'shaw',
+        feature: qn.feature, title: (qn.title || '') + (qn.question_count ? ` · ${qn.question_count} questions` : '') } });
+    }
+  } catch {}
+}, 3000);
 
 // 3) commits -> repo node flash (repos/*/.git/logs/HEAD)
 chokidar.watch(path.join(REPOS, '*/.git/logs/HEAD'), { ignoreInitial: true,
