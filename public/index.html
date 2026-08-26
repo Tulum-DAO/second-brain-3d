@@ -1369,10 +1369,12 @@ function init(data){
     canvas.addEventListener('pointerup',ev=>{
       if(!tap) return; const moved=Math.hypot(ev.clientX-tap.x,ev.clientY-tap.y), dur=performance.now()-tap.t; tap=null
       if(moved>14||dur>600) return                 // that was a drag/orbit, not a tap
-      // If an orb is currently glowing under the cursor, THAT is the intended target — FG's hover
-      // raycaster is depth-aware (picks the front orb), so honour it over the flat screen-space pick
-      // which ignores depth and could grab an orb behind the one you're looking at.
-      const n=hoverNode||pickNode(ev.clientX,ev.clientY)   // orbs win over edges
+      // Whatever is GLOWING under the cursor is what you meant — FG's hover raycaster is depth-aware,
+      // so a hovered orb/edge wins over the flat screen-space picks (which ignore depth and could grab
+      // something behind). Priority: hovered orb → hovered edge → nearest orb → nearest edge.
+      if(hoverNode){ flyTo(hoverNode); post('brain:select',{id:hoverNode.id,name:hoverNode.name,cluster:hoverNode.cluster,status:hoverNode.status,meta:hoverNode.meta}); return }
+      if(hoverLink){ inspectEdge(hoverLink.source.id||hoverLink.source, hoverLink.target.id||hoverLink.target); return }
+      const n=pickNode(ev.clientX,ev.clientY)
       if(n){ flyTo(n); post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta}); return }
       const e=pickEdge(ev.clientX,ev.clientY)
       if(e){ inspectEdge(e.a,e.b) }
