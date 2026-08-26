@@ -844,7 +844,7 @@ const growth={ active:false, lastReapply:0 }
 const scrGrowBtn=document.getElementById('scr-grow')
 function nodeBornVisible(n){ return n.__obj && (n.__obj.visible = (n.__born!==false) && LAYERS.orbs) }
 async function enterGrowth(){
-  if(scr.hours!==4400){ scrWin.value='4400'; await loadHistory(4400) }   // growth needs the full timeline
+  if(scr.hours!==+scrWin.value) await loadHistory(+scrWin.value)   // growth replays the SELECTED window, not "all"
   growth.active=true; scrGrowBtn.classList.add('on')
   for(const n of DATA.nodes){ n.__born=false; if(n.__obj) n.__obj.visible=false }  // empty brain
   for(const l of DATA.links){ l.__born=false; l.__act=0 }
