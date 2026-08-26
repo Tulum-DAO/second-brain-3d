@@ -113,7 +113,7 @@
   .ticker .ev .tag{color:var(--amber);margin-right:8px}
 
   /* time scrubber */
-  .scrubber{position:fixed;bottom:0;left:0;right:0;z-index:14;height:44px;display:flex;align-items:center;gap:12px;
+  .scrubber{position:fixed;bottom:0;left:0;right:0;z-index:16;height:44px;display:flex;align-items:center;gap:12px;
     padding:0 24px;background:linear-gradient(to top,rgba(10,8,6,.96),rgba(10,8,6,.72));border-top:1px solid var(--line);pointer-events:auto}
   .scr-btn{background:transparent;border:1px solid var(--line);color:var(--cream);font-family:inherit;font-size:10px;
     letter-spacing:.14em;padding:5px 10px;border-radius:5px;cursor:pointer;transition:all .15s}
@@ -1339,7 +1339,10 @@ function init(data){
     canvas.addEventListener('pointerup',ev=>{
       if(!tap) return; const moved=Math.hypot(ev.clientX-tap.x,ev.clientY-tap.y), dur=performance.now()-tap.t; tap=null
       if(moved>14||dur>600) return                 // that was a drag/orbit, not a tap
-      const n=pickNode(ev.clientX,ev.clientY)       // orbs win over edges
+      // If an orb is currently glowing under the cursor, THAT is the intended target — FG's hover
+      // raycaster is depth-aware (picks the front orb), so honour it over the flat screen-space pick
+      // which ignores depth and could grab an orb behind the one you're looking at.
+      const n=hoverNode||pickNode(ev.clientX,ev.clientY)   // orbs win over edges
       if(n){ flyTo(n); post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta}); return }
       const e=pickEdge(ev.clientX,ev.clientY)
       if(e){ inspectEdge(e.a,e.b) }
