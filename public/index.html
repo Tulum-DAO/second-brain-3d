@@ -454,17 +454,13 @@ function linkColorFn(l){
       const r=(232+(255-232)*act)|0, g=(162+(255-162)*act)|0, bl=(37+(235-37)*act)|0
       return `rgba(${r},${g},${bl},${(0.30+act*0.68).toFixed(3)})`
     }
-    // In brain mode the resting comm web recedes so the anatomy reads; active/heated/focused
-    // edges still light up via the branches above. Pillars keep the original weight.
-    // Brain mode: a COLD, unfocused comm edge is fully transparent so the anatomy reads clean
-    // (matches the edge-free silhouette). It reappears the instant it heats (act>0, handled above),
-    // is hovered (handled at top), or its node is focused (the .75 branch here). Pillars unchanged.
-    return (focusId&&(a===focusId||b===focusId))?'rgba(232,162,37,.75)':(BRAIN?'rgba(232,162,37,0)':'rgba(232,162,37,.32)')
+    // A cold, unfocused comm edge stays faintly TRANSLUCENT in brain mode (lower than pillars so the
+    // anatomy still reads, but visible) and brightens the instant it heats/hovers/focuses.
+    return (focusId&&(a===focusId||b===focusId))?'rgba(232,162,37,.75)':(BRAIN?'rgba(232,162,37,.12)':'rgba(232,162,37,.32)')
   }
-  // structural links (soul=agent→prompt, works_on=agent→repo/client): at rest in brain mode they
-  // span brain→satellite and clutter the silhouette, so hide them unless a node is focused (which
-  // reveals its connections) or the edge is hovered (handled at top). Pillars keep them visible.
-  if(BRAIN && !(focusId&&(a===focusId||b===focusId))) return 'rgba(237,228,211,0)'
+  // structural links (soul=agent→prompt, works_on=agent→repo/client) span brain→satellite; keep them
+  // faintly translucent at rest in brain mode (fainter than comm) rather than hidden.
+  if(BRAIN && !(focusId&&(a===focusId||b===focusId))) return l.cross?'rgba(232,162,37,.08)':'rgba(237,228,211,.07)'
   return l.cross?'rgba(232,162,37,.26)':'rgba(237,228,211,.24)'
 }
 function linkWidthFn(l){
