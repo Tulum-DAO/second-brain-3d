@@ -191,9 +191,11 @@
   body.console .topbar{top:16px;left:16px}
   body.console .orbit-btn{margin-top:10px}
   /* live activity feed — bottom sheet that's always streaming, independent of node/edge taps */
-  .feed{position:fixed;left:0;right:0;bottom:0;z-index:15;background:rgba(12,10,8,.96);
-    border-top:1px solid var(--line);backdrop-filter:blur(8px);transform:translateY(calc(100% - 42px));
-    transition:transform .32s cubic-bezier(.4,0,.2,1);pointer-events:auto;max-height:72vh;display:flex;flex-direction:column}
+  /* sits ABOVE the scrubber (46px) so the timeline stays visible; collapsed shows only its header */
+  .feed{position:fixed;left:0;right:0;bottom:46px;z-index:15;background:rgba(12,10,8,.96);
+    border-top:1px solid var(--line);border-bottom:1px solid var(--line);backdrop-filter:blur(8px);
+    transform:translateY(calc(100% - 42px));
+    transition:transform .32s cubic-bezier(.4,0,.2,1);pointer-events:auto;max-height:64vh;display:flex;flex-direction:column}
   .feed.open{transform:translateY(0)}
   body:not(.console) .feed{display:none}
   .feed-head{height:42px;flex:0 0 auto;display:flex;align-items:center;gap:10px;padding:0 16px;cursor:pointer;user-select:none}
@@ -1308,7 +1310,7 @@ function init(data){
   // via flyTo; edge → right msgpanel via inspectEdge). Non-invasive: never touches the 3D object model
   // or the digest landmine. A tap = pointerdown+up, small move, short duration (a drag is left to orbit).
   if(CONSOLE){
-    const NODE_R=30, EDGE_R=20     // fingertip pick radii in CSS px
+    const NODE_R=18, EDGE_R=12     // fingertip pick radii in CSS px
     const project=(x,y,z)=>{ const v=new THREE.Vector3(x,y,z).project(Graph.camera())
       if(v.z>=1) return null; const rect=el.getBoundingClientRect()
       return {x:(v.x*0.5+0.5)*rect.width+rect.left, y:(-v.y*0.5+0.5)*rect.height+rect.top} }
