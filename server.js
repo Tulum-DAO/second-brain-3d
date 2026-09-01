@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import chokidar from 'chokidar';
 import { buildGraph, liveSessions, resolveActorId, normActor, hubSeed, db, AO, REPOS } from './lib/collect.js';
+import { startStatusPoller, getStatusMap } from './lib/status.js';
 import { brainPosFor, brainAsset, REGION_LEGEND } from './lib/layout-brain.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -81,6 +82,12 @@ const server = http.createServer((req, res) => {
   }
   // agent spawn / first-appearance events for the scrubber. Read-only over agent-sessions.json;
   // per agent, appearance ts = spawned_at|created_at|launched_at, else its transcript's birthtime.
+  // live per-agent work-state snapshot (WS agent.status deltas keep it fresh after load)
+  if (url === '/api/status') {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify({ status: getStatusMap() }));
+    return;
+  }
   if (url === '/api/spawns') {
     const q = new URLSearchParams(req.url.split('?')[1] || '');
     const hours = Math.min(Math.max(parseInt(q.get('hours') || '720', 10), 1), 8760);
@@ -427,6 +434,9 @@ chokidar.watch(path.join(PUBLIC, 'index.html'), { ignoreInitial: true })
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`[brain] listening on http://127.0.0.1:${PORT}  (WS same port)`);
 });
+
+// firing brain: poll agent work-states, push deltas to clients
+startStatusPoller({ onDelta: (changes) => broadcast({ type: 'agent.status', changes }) });
 
 process.on('uncaughtException', (e) => console.error('[brain] uncaught', e));
 process.on('unhandledRejection', (e) => console.error('[brain] unhandled', e));
