@@ -9,6 +9,7 @@ import { WebSocketServer } from 'ws';
 import chokidar from 'chokidar';
 import { buildGraph, liveSessions, resolveActorId, normActor, hubSeed, db, AO, REPOS } from './lib/collect.js';
 import { startStatusPoller, getStatusMap } from './lib/status.js';
+import { agentConvo } from './lib/convo.js';
 import { brainPosFor, brainAsset, REGION_LEGEND } from './lib/layout-brain.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -83,6 +84,18 @@ const server = http.createServer((req, res) => {
   // agent spawn / first-appearance events for the scrubber. Read-only over agent-sessions.json;
   // per agent, appearance ts = spawned_at|created_at|launched_at, else its transcript's birthtime.
   // live per-agent work-state snapshot (WS agent.status deltas keep it fresh after load)
+  if (url === '/api/convo') {
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    const agent = q.get('agent') || '';
+    const n = Math.min(Math.max(parseInt(q.get('n') || '40', 10), 1), 200);
+    const fallback = { agent, source: 'none', events: [] };
+    Promise.resolve().then(() => agentConvo(agent, n)).catch(() => fallback).then(result => {
+      if (!result || typeof result.source !== 'string') result = fallback;
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(result));
+    });
+    return;
+  }
   if (url === '/api/status') {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     res.end(JSON.stringify({ status: getStatusMap() }));
