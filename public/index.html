@@ -1313,8 +1313,7 @@ function init(data){
       if(n){rv.textContent=n.name;rp.textContent=n.cluster;rp.style.color=colorOf(n.cluster);post('brain:hover',{id:n.id,name:n.name,cluster:n.cluster})}
       else if(!selected&&!focusId){rv.textContent='the whole operation';rp.textContent=ALL_LABEL;rp.style.color='var(--amber)'}
     })
-    .onNodeClick(n=>{ if(CONSOLE) return   // console: our screen-space picker owns selection (avoids double-fire with the click raycast)
-      flyTo(n); post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta}) })
+    .onNodeClick(()=>{})   // the depth-aware screen-space picker owns selection on ALL surfaces (avoids double-fire with the click raycast)
     // hovering an edge brightens+thickens it, lights its two endpoint nodes, and shows a tooltip
     // naming both agents — so you can tell what you're about to click. reapplyLinks() restyles via
     // the accessor fns, so this works for every current AND future edge automatically.
@@ -1331,11 +1330,8 @@ function init(data){
       const kind=l.kind==='comm'?(l.weight?`${l.weight} message${l.weight===1?'':'s'}`:'messages'):(l.kind==='member'?'member of':'link')
       return `<div style="font-family:'Azeret Mono',monospace;font-size:12px;background:rgba(10,8,6,.94);padding:8px 12px;border-radius:6px;line-height:1.5;border:1px solid rgba(237,228,211,.16)"><div><span style="color:${colorOf(a.cluster)}">${a.name}</span> <span style="color:var(--amber)">⇄</span> <span style="color:${colorOf(b.cluster)}">${b.name}</span></div><div style="opacity:.55;font-size:9px;letter-spacing:.14em;margin-top:3px;text-transform:uppercase">${kind}</div></div>`
     })
-    .onLinkClick(l=>{ if(CONSOLE) return   // console: screen-space picker owns edge selection
-      const a=l.source.id||l.source,b=l.target.id||l.target
-      if(l.kind==='comm'||l.kind==='member'||l.__new) inspectEdge(a,b) })
-    .onBackgroundClick(()=>{ if(CONSOLE) return   // console taps rarely hit exact geometry; our screen-space picker owns selection + panels have their own close button
-      clearFocus(); panel.classList.remove('on'); msgpanel.classList.remove('on'); Graph.zoomToFit(900,80) })
+    .onLinkClick(()=>{})         // picker owns edge selection
+    .onBackgroundClick(()=>{})   // picker owns background behavior (desktop clear lives in its pointerup)
 
   // force tuning: strong repulsion + short member springs spread the pillars apart;
   // weak comm springs so cross-cluster edges don't yank everything into a ball.
@@ -1395,50 +1391,74 @@ function init(data){
     }
   },true)
 
-  // ---- CONSOLE finger hitboxes: screen-space tap picker ----
-  // 3d-force-graph raycasts against the exact orb/edge geometry — too small for a fingertip. Instead
-  // we hit-test in screen space with generous pixel radii and fire the SAME actions (orb → left panel
-  // via flyTo; edge → right msgpanel via inspectEdge). Non-invasive: never touches the 3D object model
-  // or the digest landmine. A tap = pointerdown+up, small move, short duration (a drag is left to orbit).
-  if(CONSOLE){
-    const NODE_R=18, EDGE_R=12     // fingertip pick radii in CSS px
+  // ---- screen-space tap/click picker (ALL surfaces): depth-aware scored pick ----
+  // 3d-force-graph raycasts against the exact orb/edge geometry — too small for a fingertip (or even
+  // a zoomed-in mouse click). We hit-test in screen space with generous radii and fire the SAME
+  // actions (orb → left panel via flyTo; edge → right msgpanel via inspectEdge). Depth-aware: among
+  // candidates inside the pick radius, score = (screenDist/R)² + DEPTH_W·depthNorm, lowest wins —
+  // so a dot closer to BOTH the camera and the pointer always beats one behind it, and camera
+  // proximity breaks near-ties (a dead-center far dot still loses to a near dot at the radius edge).
+  // Non-invasive: never touches the 3D object model or the digest landmine.
+  {
+    const TOUCH_NODE_R=18, TOUCH_EDGE_R=12, MOUSE_NODE_R=12, MOUSE_EDGE_R=8   // pick radii in CSS px
+    const DEPTH_W=1.5   // full depth penalty (1.5) strictly beats the worst screen term (1.0)
     const project=(x,y,z)=>{ const v=new THREE.Vector3(x,y,z).project(Graph.camera())
       if(v.z>=1) return null; const rect=el.getBoundingClientRect()
       return {x:(v.x*0.5+0.5)*rect.width+rect.left, y:(-v.y*0.5+0.5)*rect.height+rect.top} }
-    function pickNode(px,py){
-      let best=null,bd=NODE_R*NODE_R
+    function pickNode(px,py,R){
+      const cam=Graph.camera().position, cand=[]
       for(const n of DATA.nodes){ if(n.x==null||(n.__obj&&!n.__obj.visible)) continue
         const s=project(n.x,n.y,n.z); if(!s) continue
-        const d=(s.x-px)**2+(s.y-py)**2; if(d<bd){bd=d;best=n} }
+        const d2=(s.x-px)**2+(s.y-py)**2; if(d2>R*R) continue
+        cand.push({n,d2,z:Math.hypot(n.x-cam.x,n.y-cam.y,n.z-cam.z)}) }
+      if(!cand.length) return null
+      let zmin=Infinity; for(const c of cand) if(c.z<zmin) zmin=c.z
+      // depth penalty saturates at an ABSOLUTE gap (~12% of view distance ≈ fully behind the near
+      // dot), so a clearly-nearer dot beats a dead-center far one anywhere inside the radius, while
+      // near-equal depths leave the pointer distance in charge.
+      const zsat=Math.max(60,zmin*0.12)
+      let best=null,bs=Infinity
+      for(const c of cand){ const sc=c.d2/(R*R)+DEPTH_W*Math.min(1,(c.z-zmin)/zsat); if(sc<bs){bs=sc;best=c.n} }
       return best
     }
-    function pickEdge(px,py){
+    function pickEdge(px,py,R){
       if(!LAYERS.edges) return null
-      let best=null,bd=EDGE_R*EDGE_R
+      const cam=Graph.camera().position, cand=[]
       for(const l of DATA.links){ const a=byId.get(l.source.id||l.source), b=byId.get(l.target.id||l.target)
         if(!a||!b||a.x==null||b.x==null) continue
         const pa=project(a.x,a.y,a.z), pb=project(b.x,b.y,b.z); if(!pa||!pb) continue
-        // distance from tap to the screen-space segment pa→pb
+        // distance from tap to the screen-space segment pa→pb (t = position along it)
         const vx=pb.x-pa.x, vy=pb.y-pa.y, L2=vx*vx+vy*vy||1
         let t=((px-pa.x)*vx+(py-pa.y)*vy)/L2; t=Math.max(0,Math.min(1,t))
-        const cx=pa.x+t*vx, cy=pa.y+t*vy, d=(cx-px)**2+(cy-py)**2
-        if(d<bd){bd=d;best={a:a.id,b:b.id}} }
+        const cx=pa.x+t*vx, cy=pa.y+t*vy, d2=(cx-px)**2+(cy-py)**2; if(d2>R*R) continue
+        const wx=a.x+t*(b.x-a.x), wy=a.y+t*(b.y-a.y), wz=a.z+t*(b.z-a.z)   // depth at the closest point
+        cand.push({a:a.id,b:b.id,d2,z:Math.hypot(wx-cam.x,wy-cam.y,wz-cam.z)}) }
+      if(!cand.length) return null
+      let zmin=Infinity; for(const c of cand) if(c.z<zmin) zmin=c.z
+      const zsat=Math.max(60,zmin*0.12)   // same saturating depth penalty as pickNode
+      let best=null,bs=Infinity
+      for(const c of cand){ const sc=c.d2/(R*R)+DEPTH_W*Math.min(1,(c.z-zmin)/zsat); if(sc<bs){bs=sc;best=c} }
       return best
     }
+    window.__pick={pickNode,pickEdge}   // debug/test handle
     let tap=null
     canvas.addEventListener('pointerdown',ev=>{ tap={x:ev.clientX,y:ev.clientY,t:performance.now()} },true)
     canvas.addEventListener('pointerup',ev=>{
       if(!tap) return; const moved=Math.hypot(ev.clientX-tap.x,ev.clientY-tap.y), dur=performance.now()-tap.t; tap=null
       if(moved>14||dur>600) return                 // that was a drag/orbit, not a tap
+      const touch=ev.pointerType!=='mouse'
+      const NR=touch?TOUCH_NODE_R:MOUSE_NODE_R, ER=touch?TOUCH_EDGE_R:MOUSE_EDGE_R
       // Whatever is GLOWING under the cursor is what you meant — FG's hover raycaster is depth-aware,
-      // so a hovered orb/edge wins over the flat screen-space picks (which ignore depth and could grab
-      // something behind). Priority: hovered orb → hovered edge → nearest orb → nearest edge.
+      // so a hovered orb/edge wins over the scored picks. Priority: hovered orb → hovered edge →
+      // scored orb → scored edge → (desktop) background clear.
       if(hoverNode){ flyTo(hoverNode); post('brain:select',{id:hoverNode.id,name:hoverNode.name,cluster:hoverNode.cluster,status:hoverNode.status,meta:hoverNode.meta}); return }
       if(hoverLink){ inspectEdge(hoverLink.source.id||hoverLink.source, hoverLink.target.id||hoverLink.target); return }
-      const n=pickNode(ev.clientX,ev.clientY)
+      const n=pickNode(ev.clientX,ev.clientY,NR)
       if(n){ flyTo(n); post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta}); return }
-      const e=pickEdge(ev.clientX,ev.clientY)
-      if(e){ inspectEdge(e.a,e.b) }
+      const e=pickEdge(ev.clientX,ev.clientY,ER)
+      if(e){ inspectEdge(e.a,e.b); return }
+      // nothing pickable: desktop keeps its background-click behavior (console panels have close buttons)
+      if(!CONSOLE){ clearFocus(); panel.classList.remove('on'); msgpanel.classList.remove('on'); Graph.zoomToFit(900,80) }
     })
   }
 
