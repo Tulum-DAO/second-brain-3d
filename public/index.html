@@ -240,11 +240,31 @@
     .scr-time{min-width:0;flex:0 1 auto;overflow:hidden;text-overflow:ellipsis;font-size:9px;letter-spacing:.02em}
     .scr-win{padding:4px 4px;font-size:9px}
   }
+
+  /* convo card */
+  #convocard{position:fixed;z-index:14;pointer-events:auto;width:300px;max-height:320px;overflow-y:auto;
+    background:rgba(15,12,10,.94);border:1px solid var(--line);border-radius:8px;
+    font-family:'Azeret Mono',monospace;font-size:10.5px;color:var(--cream);display:none;
+    backdrop-filter:blur(6px);scrollbar-width:thin;scrollbar-color:rgba(237,228,211,.15) transparent}
+  #convocard.on{display:block}
+  #convocard .cc-hdr{display:flex;justify-content:space-between;align-items:center;padding:7px 10px 5px;
+    border-bottom:1px solid var(--line);font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--amber)}
+  #convocard .cc-close{cursor:pointer;color:var(--muted);font-size:14px;line-height:1}
+  #convocard .cc-close:hover{color:var(--cream)}
+  #convocard .cc-body{padding:6px 10px 8px}
+  #convocard .cc-user{color:#ede4d3;margin:4px 0;line-height:1.45}
+  #convocard .cc-asst{color:#8a7f6e;margin:4px 0;line-height:1.45}
+  #convocard .cc-tool{display:inline-block;font-size:9px;letter-spacing:.08em;padding:2px 6px;margin:3px 0;
+    border-radius:3px;background:rgba(232,162,37,.12);color:var(--amber);max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  #convocard .cc-pre{white-space:pre-wrap;color:#8a7f6e;margin:4px 0;line-height:1.45;font-size:10px}
+  #convocard .cc-none{color:var(--muted);font-style:italic;padding:12px 0;text-align:center}
+  #convocard .cc-dot{position:absolute;width:6px;height:6px;border-radius:50%;left:-3px;top:14px}
 </style>
 </head>
 <body>
 <div id="brain-graph"></div>
 <div id="pulse-labels"></div>
+<div id="convocard"><div class="cc-dot"></div><div class="cc-hdr"><span class="cc-name"></span><span class="cc-close">&times;</span></div><div class="cc-body"></div></div>
 
 <div class="fx grain"></div>
 <div class="fx scanlines"></div>
@@ -769,6 +789,7 @@ function animFlashes(now){
   // so our per-frame sprite moves would only paint occasionally (comet appears to teleport).
   // While anything is animating (pulses/flashes/heat/flying) or re-anchoring, force a full-rate render.
   const halosPulsing=animHalos(now)   // anchor status halos + pulse working ones (every frame)
+  positionConvoCard()
   if(Graph && (activePulses.length || flashing.size || anyAct || flying || orbited || spriteDirty || hoverNode || hoverLink || halosPulsing)){
     // Re-anchor sprites to their static node coords IMMEDIATELY before painting. Setting any link
     // accessor triggers three-forcegraph's debounced scene digest, which resets node objects to
@@ -1451,10 +1472,10 @@ function init(data){
       // Whatever is GLOWING under the cursor is what you meant — FG's hover raycaster is depth-aware,
       // so a hovered orb/edge wins over the scored picks. Priority: hovered orb → hovered edge →
       // scored orb → scored edge → (desktop) background clear.
-      if(hoverNode){ flyTo(hoverNode); post('brain:select',{id:hoverNode.id,name:hoverNode.name,cluster:hoverNode.cluster,status:hoverNode.status,meta:hoverNode.meta}); return }
+      if(hoverNode){ flyTo(hoverNode); post('brain:select',{id:hoverNode.id,name:hoverNode.name,cluster:hoverNode.cluster,status:hoverNode.status,meta:hoverNode.meta}); if(hoverNode.kind==='agent')openConvoCard(hoverNode); return }
       if(hoverLink){ inspectEdge(hoverLink.source.id||hoverLink.source, hoverLink.target.id||hoverLink.target); return }
       const n=pickNode(ev.clientX,ev.clientY,NR)
-      if(n){ flyTo(n); post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta}); return }
+      if(n){ flyTo(n); post('brain:select',{id:n.id,name:n.name,cluster:n.cluster,status:n.status,meta:n.meta}); if(n.kind==='agent')openConvoCard(n); return }
       const e=pickEdge(ev.clientX,ev.clientY,ER)
       if(e){ inspectEdge(e.a,e.b); return }
       // nothing pickable: desktop keeps its background-click behavior (console panels have close buttons)
@@ -1473,6 +1494,108 @@ function init(data){
   if(BRAIN) loadBrainLobes()   // translucent region lobes (outside the forcegraph digest)
 
   window.__brain={Graph,DATA,focusOn,clearFocus,pulseLink,get focusId(){return focusId},get pulses(){return activePulses},get scr(){return scr},applySnapshotAt} // debug handle
+
+  // ---------- tethered convo card ----------
+  const ccEl=document.getElementById('convocard')
+  const ccName=ccEl.querySelector('.cc-name')
+  const ccBody=ccEl.querySelector('.cc-body')
+  const ccDot=ccEl.querySelector('.cc-dot')
+  ccEl.querySelector('.cc-close').onclick=()=>closeConvoCard()
+  let convoCard={el:ccEl,agentId:null,name:null,timer:null,lastKey:null,userScrolled:false}
+
+  function closeConvoCard(){
+    convoCard.el.classList.remove('on')
+    if(convoCard.timer){clearInterval(convoCard.timer);convoCard.timer=null}
+    convoCard.agentId=null; convoCard.name=null; convoCard.lastKey=null; convoCard.userScrolled=false
+  }
+
+  function openConvoCard(node){
+    if(!node||node.kind!=='agent') return
+    if(convoCard.agentId===node.id) return // already showing for this agent
+    closeConvoCard()
+    convoCard.agentId=node.id
+    convoCard.name=node.name
+    ccName.textContent=node.name
+    const sc=STATUS_COLORS[node.stat]||STATUS_COLORS.idle
+    ccEl.style.borderLeftWidth='3px'
+    ccEl.style.borderLeftColor=sc
+    ccDot.style.background=sc
+    convoCard.el.classList.add('on')
+    ccBody.innerHTML='<div class="cc-none">loading...</div>'
+    // track user scroll
+    convoCard.userScrolled=false
+    ccEl.onscroll=()=>{
+      const atBottom=ccEl.scrollTop+ccEl.clientHeight>=ccEl.scrollHeight-8
+      convoCard.userScrolled=!atBottom
+    }
+    fetchConvo()
+    convoCard.timer=setInterval(fetchConvo,3000)
+    positionConvoCard()
+  }
+
+  async function fetchConvo(){
+    if(!convoCard.agentId) return
+    try{
+      const r=await fetch(`/api/convo?agent=${encodeURIComponent(convoCard.name)}&n=18`)
+      if(!r.ok) throw new Error(r.status)
+      const d=await r.json()
+      const key=(d.events||[]).length+':'+(d.events&&d.events.length?(d.events[d.events.length-1].text||d.events[d.events.length-1].tool?.name||''):'')
+      if(key===convoCard.lastKey) return
+      convoCard.lastKey=key
+      renderConvo(d)
+    }catch(e){
+      if(!convoCard.lastKey){ ccBody.innerHTML='<div class="cc-none">no transcript</div>'; convoCard.lastKey='err' }
+    }
+  }
+
+  function renderConvo(d){
+    if(!d.events||!d.events.length){ ccBody.innerHTML='<div class="cc-none">no transcript</div>'; return }
+    const isPane=d.source==='pane'
+    let html=''
+    for(const ev of d.events){
+      if(ev.tool){
+        const inp=(ev.tool.input?JSON.stringify(ev.tool.input):'').slice(0,60)
+        html+=`<div class="cc-tool">[${ev.tool.name}] ${inp}</div>`
+      } else if(isPane){
+        html+=`<div class="cc-pre">${esc(ev.text||'')}</div>`
+      } else if(ev.role==='user'){
+        html+=`<div class="cc-user">\u276F ${esc((ev.text||'').slice(0,200))}</div>`
+      } else {
+        html+=`<div class="cc-asst">${esc((ev.text||'').slice(0,300))}</div>`
+      }
+    }
+    ccBody.innerHTML=html
+    if(!convoCard.userScrolled) ccEl.scrollTop=ccEl.scrollHeight
+    // update status color
+    const n=byId.get(convoCard.agentId)
+    if(n){
+      const sc=STATUS_COLORS[n.stat]||STATUS_COLORS.idle
+      ccEl.style.borderLeftColor=sc; ccDot.style.background=sc
+    }
+  }
+  function esc(s){ return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;') }
+
+  function positionConvoCard(){
+    if(!convoCard.agentId||!convoCard.el.classList.contains('on')) return
+    const n=byId.get(convoCard.agentId)
+    if(!n||!n.__obj||!n.__obj.visible){ convoCard.el.style.visibility='hidden'; return }
+    const v=new THREE.Vector3(n.x,n.y,n.z).project(Graph.camera())
+    if(v.z>=1){ convoCard.el.style.visibility='hidden'; return }
+    convoCard.el.style.visibility='visible'
+    const rect=el.getBoundingClientRect()
+    const sx=(v.x*0.5+0.5)*rect.width+rect.left
+    const sy=(-v.y*0.5+0.5)*rect.height+rect.top
+    // offset card 24px right of orb, clamped to viewport
+    const cw=300, ch=convoCard.el.offsetHeight||200
+    let cx=sx+24, cy=sy-ch*0.5
+    if(cx+cw>window.innerWidth-8) cx=sx-cw-24
+    if(cy<8) cy=8
+    if(cy+ch>window.innerHeight-8) cy=window.innerHeight-ch-8
+    convoCard.el.style.transform=`translate(${Math.round(cx)}px,${Math.round(cy)}px)`
+    convoCard.el.style.left='0'; convoCard.el.style.top='0'
+  }
+
+  window.__convo={open:openConvoCard,close:closeConvoCard}
   renderLegend(); initLayersMenu(); initFeed()
   const st=data.stats
   document.getElementById('subtitle').innerHTML=`<b>${st.agents}</b> agents · <b>${st.repos}</b> repos · <b>${st.clients}</b> clients · <b>${st.live}</b> live · <b>${st.commEdges||0}</b> comm-edges · <b>${st.msgs24h||0}</b> msgs/24h`
