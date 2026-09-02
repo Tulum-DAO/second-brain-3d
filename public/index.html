@@ -303,6 +303,31 @@
   #convooverlay .co-pre{white-space:pre-wrap;color:#8a7f6e;margin:5px 0;line-height:1.5;font-size:10.5px;
     background:rgba(138,127,110,.07);border-radius:5px;padding:8px 10px}
   #convooverlay .co-none{color:var(--muted);font-style:italic;padding:24px 0;text-align:center}
+
+  /* chat composer (shared by card + overlay) */
+  .chat-wrap{flex-shrink:0;border-top:1px solid var(--line);padding:6px 8px;display:flex;flex-direction:column;gap:4px}
+  .chat-chips{display:flex;flex-wrap:wrap;gap:4px}
+  .chat-chips:empty{display:none}
+  .chat-chip{font-size:9px;color:var(--amber);background:rgba(232,162,37,.12);border-radius:3px;padding:2px 6px;
+    max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer}
+  .chat-chip:hover{background:rgba(232,162,37,.25)}
+  .chat-notice{font-size:9px;color:#e8a225;display:flex;align-items:center;gap:8px}
+  .chat-notice:empty{display:none}
+  .chat-notice .cn-force{cursor:pointer;text-decoration:underline;color:var(--cream)}
+  .chat-bar{display:flex;align-items:flex-end;gap:6px}
+  .chat-att{cursor:pointer;color:var(--muted);font-size:14px;line-height:1;padding:5px 2px;flex-shrink:0;user-select:none}
+  .chat-att:hover{color:var(--cream)}
+  .chat-ta{flex:1;resize:none;background:rgba(20,17,15,.9);border:1px solid var(--line);border-radius:6px;
+    color:var(--cream);font-family:inherit;font-size:10.5px;line-height:1.4;padding:5px 8px;max-height:96px;
+    outline:none;scrollbar-width:thin}
+  .chat-ta:focus{border-color:rgba(232,162,37,.5)}
+  .chat-send{cursor:pointer;flex-shrink:0;border:1px solid var(--line);border-radius:6px;background:rgba(232,162,37,.15);
+    color:var(--amber);font-family:inherit;font-size:11px;line-height:1;padding:6px 9px;user-select:none}
+  .chat-send:hover{background:rgba(232,162,37,.3)}
+  .chat-send:disabled{opacity:.35;cursor:default}
+  .chat-send.stop{background:rgba(239,68,68,.18);color:#ef4444;border-color:rgba(239,68,68,.4)}
+  .chat-send.stop:hover{background:rgba(239,68,68,.32)}
+  .chat-send.busy{opacity:.6;cursor:wait}
 </style>
 </head>
 <body>
@@ -1414,7 +1439,8 @@ function init(data){
   const MOVE_KEYS={w:1,a:1,s:1,d:1,q:1,e:1}
   keyState={}
   addEventListener('keydown',ev=>{
-    if(document.activeElement===searchEl) return          // don't hijack search typing
+    const ae=document.activeElement
+    if(ae&&(ae===searchEl||ae.tagName==='TEXTAREA'||ae.tagName==='INPUT')) return   // don't hijack typing (search, chat composer)
     const k=ev.key.toLowerCase()
     if(MOVE_KEYS[k]){ keyState[k]=true; c.autoRotate=false; if(orbiting)setOrbit(false); ev.preventDefault() }
   })
@@ -1577,6 +1603,7 @@ function init(data){
     }
     fetchConvo()
     convoCard.timer=setInterval(fetchConvo,3000)
+    ccComposer.reset()
     positionConvoCard()
   }
 
@@ -1729,6 +1756,7 @@ function init(data){
     }
     fetchConvoOverlay()
     convoOverlay.timer=setInterval(fetchConvoOverlay,4000)
+    coComposer.reset()
 
     // escape key — one listener, removed on close
     convoOverlay.kbListener=(e)=>{ if(e.key==='Escape') closeConvoOverlay(true) }
@@ -1802,7 +1830,107 @@ function init(data){
     if(!convoOverlay.userScrolled) coBody.scrollTop=coBody.scrollHeight
   }
 
-  window.__convo={open:openConvoCard,close:closeConvoCard,openOverlay:openConvoOverlay,closeOverlay:(m=true)=>closeConvoOverlay(m)}
+  // ---------- chat composer: send / attach / interrupt (parity with OrchestraOS web + iOS) ----------
+  // Mechanics mirror the canonical gateway contract (server-side proxy keeps the token off this
+  // surface): POST /api/chat/send {agent,text,force} → verified tmux inject (409 busy → "send
+  // anyway" retries with force, which only skips the composer-text gate, never the active-turn
+  // gate); /api/chat/interrupt → Escape (only valid mid-turn); /api/chat/upload → multipart to
+  // the gateway, then the FROZEN attachment marker grammar [attached: "name" /path (ext, size)]
+  // is appended to the message. Send button ⇄ stop button from the live status feed (n.stat).
+  const sizeLabel=b=>b>=1048576?(b/1048576).toFixed(1)+' MB':b>=1024?Math.round(b/1024)+' KB':b+' B'
+  function makeComposer(container,getAgent){
+    const wrap=document.createElement('div'); wrap.className='chat-wrap'
+    wrap.innerHTML=`<div class="chat-chips"></div><div class="chat-notice"></div>
+      <div class="chat-bar"><span class="chat-att" title="attach file">&#x1F4CE;</span>
+      <input type="file" multiple style="display:none">
+      <textarea class="chat-ta" rows="1" placeholder="message agent…"></textarea>
+      <button class="chat-send" title="send">&#x27A4;</button></div>`
+    container.appendChild(wrap)
+    const chips=wrap.querySelector('.chat-chips'), notice=wrap.querySelector('.chat-notice')
+    const attBtn=wrap.querySelector('.chat-att'), fileIn=wrap.querySelector('input[type=file]')
+    const ta=wrap.querySelector('.chat-ta'), btn=wrap.querySelector('.chat-send')
+    let atts=[], sending=false
+    const grow=()=>{ ta.style.height='auto'; ta.style.height=Math.min(ta.scrollHeight,96)+'px' }
+    const setNotice=(txt,forceFn)=>{ notice.innerHTML=''
+      if(!txt) return
+      notice.appendChild(document.createTextNode(txt))
+      if(forceFn){ const a=document.createElement('span'); a.className='cn-force'; a.textContent='send anyway'
+        a.onclick=forceFn; notice.appendChild(a) } }
+    const renderChips=()=>{ chips.innerHTML=''
+      for(const a of atts){ const c=document.createElement('span'); c.className='chat-chip'
+        c.textContent=(a.pending?'⇡ ':'')+a.name; c.title=a.pending?'uploading…':'remove'
+        c.onclick=()=>{ if(!a.pending){ atts=atts.filter(x=>x!==a); renderChips(); sync() } }
+        chips.appendChild(c) } }
+    // send ⇄ stop from the live status feed: working + empty composer = stop button (web/iOS parity)
+    function sync(){
+      const ag=getAgent()
+      const hasDraft=!!ta.value.trim()||atts.some(a=>!a.pending)
+      const working=ag&&(byId.get(ag.id)||{}).stat==='working'
+      if(working&&!hasDraft){ btn.className='chat-send stop'; btn.innerHTML='&#x25A0;'; btn.title='interrupt agent'; btn.disabled=sending }
+      else{ btn.className='chat-send'+(sending?' busy':''); btn.innerHTML='&#x27A4;'; btn.title='send'
+        btn.disabled=sending||!hasDraft||atts.some(a=>a.pending)||!ag }
+    }
+    async function doSend(force){
+      const ag=getAgent(); if(!ag||sending) return
+      const parts=[]
+      const t=ta.value.trim(); if(t) parts.push(t)
+      for(const a of atts) if(!a.pending) parts.push(`[attached: "${a.name.replace(/"/g,"'")}" ${a.path} (${a.ext}, ${sizeLabel(a.size)})]`)
+      if(!parts.length) return
+      sending=true; sync(); setNotice('')
+      try{
+        const r=await fetch('/api/chat/send',{method:'POST',headers:{'content-type':'application/json'},
+          body:JSON.stringify({agent:ag.name,text:parts.join('\n'),force:!!force})})
+        const b=await r.json().catch(()=>({}))
+        if(r.ok&&(b.delivered||b.injected||b.held||b.ok)){
+          ta.value=''; grow(); atts=[]; renderChips()
+          setNotice(b.held?'held — delivers when the agent is free':'')
+        } else if(r.status===409){
+          setNotice(`not delivered — ${b.activity||b.state||'agent busy'} `,()=>doSend(true))
+        } else if(r.status===502){
+          setNotice('delivery unverified — try again')
+        } else setNotice(`error: ${b.error||r.status}`)
+      }catch(e){ setNotice('can\u2019t reach the brain server') }
+      sending=false; sync()
+    }
+    async function doStop(){
+      const ag=getAgent(); if(!ag||sending) return
+      sending=true; sync()
+      try{
+        const r=await fetch('/api/chat/interrupt',{method:'POST',headers:{'content-type':'application/json'},
+          body:JSON.stringify({agent:ag.name})})
+        const b=await r.json().catch(()=>({}))
+        setNotice(r.ok&&(b.interrupted||b.ok)?'interrupted':`${b.error||'couldn\u2019t interrupt'}${b.state?' ('+b.state+')':''}`)
+      }catch(e){ setNotice('can\u2019t reach the brain server') }
+      sending=false; sync()
+    }
+    btn.onclick=()=>{ btn.classList.contains('stop')?doStop():doSend(false) }
+    ta.addEventListener('input',()=>{ grow(); sync() })
+    ta.addEventListener('keydown',e=>{ if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); if(!btn.classList.contains('stop')&&!btn.disabled) doSend(false) } })
+    attBtn.onclick=()=>fileIn.click()
+    fileIn.onchange=async()=>{
+      for(const f of fileIn.files){
+        const a={name:f.name,size:f.size,ext:(f.name.split('.').pop()||'bin').toLowerCase(),pending:true}
+        atts.push(a); renderChips(); sync()
+        try{
+          const fd=new FormData(); fd.append('file',f)
+          const r=await fetch('/api/chat/upload',{method:'POST',body:fd})
+          const b=await r.json().catch(()=>({}))
+          if(r.ok&&b.path){ a.path=b.path; a.name=b.originalname||f.name; a.pending=false }
+          else{ atts=atts.filter(x=>x!==a); setNotice(`upload failed: ${b.error||r.status}`) }
+        }catch(e){ atts=atts.filter(x=>x!==a); setNotice('upload failed') }
+        renderChips(); sync()
+      }
+      fileIn.value=''
+    }
+    const reset=()=>{ ta.value=''; grow(); atts=[]; renderChips(); setNotice(''); sync() }
+    return {sync,reset,el:wrap}
+  }
+  const ccComposer=makeComposer(ccEl,()=>convoCard.agentId?{id:convoCard.agentId,name:convoCard.name}:null)
+  const coComposer=makeComposer(coEl,()=>convoOverlay.agentId?{id:convoOverlay.agentId,name:convoOverlay.name}:null)
+  setInterval(()=>{ if(ccEl.classList.contains('on'))ccComposer.sync(); if(coEl.classList.contains('on'))coComposer.sync() },1200)
+
+  window.__convo={open:openConvoCard,close:closeConvoCard,openOverlay:openConvoOverlay,closeOverlay:(m=true)=>closeConvoOverlay(m),
+    composers:{card:ccComposer,overlay:coComposer}}
   renderLegend(); initLayersMenu(); initFeed()
   const st=data.stats
   document.getElementById('subtitle').innerHTML=`<b>${st.agents}</b> agents · <b>${st.repos}</b> repos · <b>${st.clients}</b> clients · <b>${st.live}</b> live · <b>${st.commEdges||0}</b> comm-edges · <b>${st.msgs24h||0}</b> msgs/24h`
