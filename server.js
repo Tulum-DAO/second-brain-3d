@@ -10,6 +10,7 @@ import chokidar from 'chokidar';
 import { buildGraph, liveSessions, resolveActorId, normActor, hubSeed, db, AO, REPOS } from './lib/collect.js';
 import { startStatusPoller, getStatusMap } from './lib/status.js';
 import { agentConvo } from './lib/convo.js';
+import { sessionFor, gwJson, gwUpload, readJsonBody } from './lib/chat.js';
 import { brainPosFor, brainAsset, REGION_LEGEND } from './lib/layout-brain.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -83,6 +84,41 @@ const server = http.createServer((req, res) => {
   }
   // agent spawn / first-appearance events for the scrubber. Read-only over agent-sessions.json;
   // per agent, appearance ts = spawned_at|created_at|launched_at, else its transcript's birthtime.
+  // ---- chat: send / interrupt / upload / screen, proxied to the canonical watch gateway ----
+  // (token stays server-side; agent name -> tmux session resolved here)
+  if (url === '/api/chat/send' && req.method === 'POST') {
+    readJsonBody(req, async (b) => {
+      if (!b || !b.agent || typeof b.text !== 'string') { res.writeHead(400, { 'content-type': 'application/json' }); return res.end('{"error":"agent+text required"}'); }
+      const r = await gwJson('POST', '/agent-message', { session: sessionFor(b.agent), text: b.text, force: !!b.force, accepts: ['held'], source: 'brain' });
+      res.writeHead(r.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(r.body));
+    });
+    return;
+  }
+  if (url === '/api/chat/interrupt' && req.method === 'POST') {
+    readJsonBody(req, async (b) => {
+      if (!b || !b.agent) { res.writeHead(400, { 'content-type': 'application/json' }); return res.end('{"error":"agent required"}'); }
+      const r = await gwJson('POST', '/agent-interrupt', { session: sessionFor(b.agent) });
+      res.writeHead(r.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(r.body));
+    });
+    return;
+  }
+  if (url === '/api/chat/upload' && req.method === 'POST') {
+    gwUpload(req).then((r) => {
+      res.writeHead(r.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(r.body));
+    });
+    return;
+  }
+  if (url === '/api/chat/screen') {
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    gwJson('GET', `/agent-screen?session=${encodeURIComponent(sessionFor(q.get('agent') || ''))}&lines=30`).then((r) => {
+      res.writeHead(r.status, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify(r.body));
+    });
+    return;
+  }
   // live per-agent work-state snapshot (WS agent.status deltas keep it fresh after load)
   if (url === '/api/convo') {
     const q = new URLSearchParams(req.url.split('?')[1] || '');
