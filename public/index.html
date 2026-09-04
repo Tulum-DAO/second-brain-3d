@@ -1480,7 +1480,12 @@ function init(data){
   const canvas=Graph.renderer().domElement
   canvas.addEventListener('pointerdown',ev=>{
     if(ev.button!==0) return                    // left-drag = orbit; right/middle = pan/zoom, leave alone
-    c.autoRotate=false; if(orbiting)setOrbit(false)   // manual drag cancels the auto-orbit
+    c.autoRotate=false
+    if(orbiting){                               // drag out of auto-orbit: KEEP the orbit center as the
+      setOrbit(false)                           // pivot — don't re-anchor onto whatever node is nearest
+      c.target.set(orbitCtr.x,orbitCtr.y,orbitCtr.z); c.enableRotate=true; c.update()
+      return
+    }
     const n=bestInViewNode()
     if(n){                                       // anchor the orbit pivot onto that node
       c.target.set(n.x,n.y,n.z); c.enableRotate=true; c.update()
