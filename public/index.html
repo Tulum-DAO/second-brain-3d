@@ -719,6 +719,7 @@ searchEl.addEventListener('input',e=>doSearch(e.target.value))
 searchEl.addEventListener('keydown',e=>{if(e.key==='Enter'){const f=DATA.nodes.find(n=>n.kind!=='hub'&&n.name.toLowerCase().includes(searchEl.value.toLowerCase()));if(f)flyTo(f)}})
 
 function flyTo(n){
+  pivotPinned=false   // explicit node focus re-anchors the pivot
   if(!n||!Graph)return
   // Fly to a fixed standoff distance ALONG the current view direction, not by radially
   // scaling the node's position. The old k=1+d/r math exploded for nodes near the origin
@@ -878,6 +879,7 @@ function animFlashes(now){
 // constellation sweeps by on a flat turntable. Runs in the animFlashes loop; any manual drag/fly
 // cancels it so the user always wins.
 let orbiting=false, orbitAngle=0, orbitR=800, orbitCtr={x:0,y:0,z:0}
+let pivotPinned=false     // after leaving orbit by drag/tap, keep orbitCtr as the drag pivot until an explicit re-anchor
 const ORBIT_SPEED=0.11   // radians/sec — slow
 function graphCenter(){
   let N=DATA.nodes; if(BRAIN){ const b=N.filter(n=>BRAIN_REGIONS.has(n.cluster)); if(b.length) N=b }
@@ -889,6 +891,7 @@ function setOrbit(on){
   orbiting=on
   const btn=document.getElementById('orbit-btn'); if(btn) btn.classList.toggle('on',on)
   if(on&&Graph){
+    pivotPinned=false
     orbitCtr=graphCenter()
     const cam=Graph.camera()
     orbitR=Math.hypot(cam.position.x-orbitCtr.x, cam.position.z-orbitCtr.z)||orbitR
@@ -919,6 +922,7 @@ function flyStep(dt){
   const ky=(keyState.w?1:0)-(keyState.s?1:0)  // up/down     (W up, S down)
   const kz=(keyState.e?1:0)-(keyState.q?1:0)  // forward/back (E forward, Q back)
   if(!kx&&!ky&&!kz) return false
+  pivotPinned=false   // free-fly moves the target with the camera; the old pin is stale
   const cam=Graph.camera(), tgt=c.target
   cam.updateMatrixWorld()
   // basis from the CAMERA's own world matrix, so movement is always relative to what you see:
@@ -1478,14 +1482,48 @@ function init(data){
     return best
   }
   const canvas=Graph.renderer().domElement
+  // zoom during auto-orbit: orbitStep rebuilds cam.position from orbitR every frame, so the
+  // controls' own dolly gets stomped — instead the wheel scales orbitR directly (orbit continues,
+  // same center, new radius). Non-orbiting wheel falls through to the controls as usual.
+  canvas.addEventListener('wheel',ev=>{
+    if(!orbiting) return
+    ev.preventDefault(); ev.stopPropagation()
+    orbitR=Math.min(6000,Math.max(30,orbitR*Math.exp(ev.deltaY*0.0012)))
+  },{passive:false,capture:true})
+  // while orbiting, pointer gestures are interpreted BEFORE deciding to exit orbit:
+  //   two fingers  = pinch-zoom the orbit radius (orbit continues, same center)
+  //   1-finger DRAG = take over rotation manually (exit orbit, pivot pinned to the centerpoint)
+  //   plain tap     = exit orbit (pivot pinned) and fall through to the tap-picker as before
+  const orbTouch=new Map()
+  function exitOrbitPinned(){ setOrbit(false); pivotPinned=true
+    c.target.set(orbitCtr.x,orbitCtr.y,orbitCtr.z); c.enableRotate=true; c.update() }
+  canvas.addEventListener('pointermove',ev=>{
+    if(!orbiting||!orbTouch.has(ev.pointerId)) return
+    const t=orbTouch.get(ev.pointerId); t.x=ev.clientX; t.y=ev.clientY
+    if(orbTouch.size>=2){                       // pinch: scale orbitR by the finger-gap ratio
+      ev.preventDefault(); ev.stopPropagation()
+      const [a,b]=[...orbTouch.values()]
+      const d=Math.hypot(a.x-b.x,a.y-b.y)
+      if(orbTouch._d) orbitR=Math.min(6000,Math.max(30,orbitR*orbTouch._d/d))
+      orbTouch._d=d
+    } else if(Math.hypot(ev.clientX-t.sx,ev.clientY-t.sy)>12){  // real drag → manual takeover
+      orbTouch.clear(); exitOrbitPinned()
+    }
+  },true)
+  const orbTouchEnd=ev=>{ orbTouch.delete(ev.pointerId); delete orbTouch._d }
+  canvas.addEventListener('pointerup',ev=>{
+    if(orbiting&&orbTouch.has(ev.pointerId)&&orbTouch.size===1) exitOrbitPinned()  // tap → picker takes it
+    orbTouchEnd(ev)
+  },true)
+  canvas.addEventListener('pointercancel',orbTouchEnd,true)
   canvas.addEventListener('pointerdown',ev=>{
     if(ev.button!==0) return                    // left-drag = orbit; right/middle = pan/zoom, leave alone
     c.autoRotate=false
-    if(orbiting){                               // drag out of auto-orbit: KEEP the orbit center as the
-      setOrbit(false)                           // pivot — don't re-anchor onto whatever node is nearest
-      c.target.set(orbitCtr.x,orbitCtr.y,orbitCtr.z); c.enableRotate=true; c.update()
+    if(orbiting){                               // defer the exit decision to move/up (drag vs pinch vs tap)
+      orbTouch.set(ev.pointerId,{x:ev.clientX,y:ev.clientY,sx:ev.clientX,sy:ev.clientY})
       return
     }
+    if(pivotPinned){ c.enableRotate=true; return }   // successive drags keep turning around the pinned centerpoint
     const n=bestInViewNode()
     if(n){                                       // anchor the orbit pivot onto that node
       c.target.set(n.x,n.y,n.z); c.enableRotate=true; c.update()
