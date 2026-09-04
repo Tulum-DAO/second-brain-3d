@@ -175,10 +175,11 @@
   .layers input[type=range]::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:50%;background:var(--amber);cursor:pointer}
 
   /* collapsible panels (Layers, Legend) — click the header to fold on small screens */
-  .panel-head{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;user-select:none}
+  .panel-head{cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:10px;user-select:none;
+    padding:8px 10px;margin:-8px -10px}  /* fat hitbox (finger/mouse) without shifting layout */
   .panel-head .caret{font-size:9px;opacity:.6;transition:transform .2s}
   .collapsible.collapsed .panel-body{display:none}
-  .collapsible.collapsed .panel-head{margin-bottom:0}
+  .collapsible.collapsed .panel-head{margin-bottom:-8px}   /* keep the fat hitbox; cancels only the title's old bottom gap */
   .collapsible.collapsed .caret{transform:rotate(-90deg)}
   .legend .panel-head{justify-content:flex-end}   /* legend is right-aligned; keep caret after the title */
 
