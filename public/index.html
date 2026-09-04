@@ -465,7 +465,8 @@ const colorOf = c => (CLUSTERS[c]?.color) || '#fff'
 const MSG_COLORS = {escalate:'#ef4444',reply:'#06b6d4',route:'#E8A225',request:'#22c55e',
   broadcast:'#8b5cf6',status:'#8A7F6E',task:'#eab308',asset_registered:'#22c55e',
   // brain-mode synapse-fire classes (firehose): tool + client work
-  uses_script:'#22d3ee',uses_prompt:'#8b5cf6',client_work:'#22c55e'}
+  uses_script:'#22d3ee',uses_prompt:'#8b5cf6',client_work:'#22c55e',
+  approval:'#3b82f6',decision:'#3b82f6'}  // decision-surface traffic: blue, matching the needs-decision halo
 const pulseColor = t => MSG_COLORS[t] || '#E8A225'
 
 // one shared glow TEXTURE per cluster; each node gets its OWN material (sharing the

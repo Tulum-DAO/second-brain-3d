@@ -384,11 +384,16 @@ setInterval(() => {
 }, 2000);
 
 // approvals + questionnaires → push new ones to the /console live feed (decisions/menus/blockers).
-let lastAprSeen = null, lastQnrSeen = null;
+// New cards ALSO pulse agent → shaw (the ask traveling to Shaw), and ANSWERED cards pulse
+// shaw → agent (the decision coming back) — answers resume agents by direct pane injection,
+// never via msg_store, so without this they'd be invisible on the brain.
+const SHAW_NODE = () => ensureActorNode('shaw-direct') || 'queue:bus';
+let lastAprSeen = null, lastQnrSeen = null, lastAnsSeen = null;
 (function initFeedCursors() {
   const d = db(); if (!d) return;
   try { lastAprSeen = d.prepare(`SELECT max(created_at) m FROM approval_requests`).get().m || null; } catch {}
   try { lastQnrSeen = d.prepare(`SELECT max(created_at) m FROM questionnaires`).get().m || null; } catch {}
+  try { lastAnsSeen = d.prepare(`SELECT max(answered_at) m FROM approval_requests`).get().m || null; } catch {}
 })();
 setInterval(() => {
   const d = db(); if (!d) return;
@@ -400,6 +405,19 @@ setInterval(() => {
       broadcast({ type: 'feed.item', item: { cat, id: 'a' + a.id, t: a.created_at, type: a.kind || 'approval',
         status: a.status, from: normActor(a.from_agent), to: 'shaw', feature: a.feature, risk: a.risk_level,
         title: (a.question || '').slice(0, 200) } });
+      const from = ensureActorNode(a.from_agent);
+      if (from) { flash(from, 'approval'); pulse(from, SHAW_NODE(), 'approval'); }
+    }
+  } catch {}
+  try {
+    for (const a of d.prepare(`SELECT id, from_agent, question, answer, option_n, answered_at
+        FROM approval_requests WHERE answered_at IS NOT NULL AND answered_at > ? ORDER BY answered_at ASC LIMIT 50`).all(lastAnsSeen || '1970-01-01')) {
+      lastAnsSeen = a.answered_at;
+      const to = ensureActorNode(a.from_agent);
+      if (to) { pulse(SHAW_NODE(), to, 'decision'); flash(to, 'decision'); }
+      broadcast({ type: 'ticker', text: `shaw → ${normActor(a.from_agent) || '?'} · decision${a.answer ? ': ' + String(a.answer).slice(0, 48) : ''}` });
+      broadcast({ type: 'feed.item', item: { cat: 'decision', id: 'ans' + a.id, t: a.answered_at, type: 'decision',
+        status: 'answered', from: 'shaw', to: normActor(a.from_agent), title: `answered: ${(a.answer || 'option ' + (a.option_n ?? '?'))} — ${(a.question || '').slice(0, 140)}` } });
     }
   } catch {}
   try {
