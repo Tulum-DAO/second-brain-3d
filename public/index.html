@@ -1381,7 +1381,11 @@ function init(data){
   // (nodes still render). Stale comm edges to removed agents are the usual culprit.
   DATA.links=DATA.links.filter(l=>byId.has(l.source.id||l.source)&&byId.has(l.target.id||l.target))
   indexCommLinks()
-  Graph=ForceGraph3D()(el)
+  // 'orbit' controls (not the default trackball): drag = lateral azimuth + vertical pitch ONLY —
+  // the trackball's third rotational DOF (arcball roll, which let a drag flip the brain upside
+  // down) is structurally gone. Also makes autoRotate + the per-frame up-vector code actually
+  // meaningful instead of fighting trackball roll.
+  Graph=ForceGraph3D({controlType:'orbit'})(el)
     .graphData(DATA)
     .width(el.clientWidth).height(el.clientHeight)
     .backgroundColor('#1E1A17').showNavInfo(false)
@@ -1433,6 +1437,10 @@ function init(data){
     .strength(l=> l.kind==='member' ? 0.75 : l.kind==='comm' ? 0.04 : 0.2)
 
   const c=Graph.controls();c.maxDistance=6000;c.minDistance=10;c.autoRotate=!EMBED;c.autoRotateSpeed=0.35
+  // lock the flip-over degree of freedom: vertical drag pitches freely but stops shy of the poles,
+  // so you can never turn the brain upside down (at the pole the view gimbal-spins = the "flip").
+  // Lateral (azimuth) stays unlimited; auto-orbit rides the equator (polar=π/2) — unaffected.
+  c.minPolarAngle=0.15; c.maxPolarAngle=Math.PI-0.15
   window.__controls=c
   // ---- WASDQE free-fly: translate BOTH camera and orbit target together, so click-drag
   // keeps orbiting a point in front of you (not a fixed origin) as you move through space. ----
