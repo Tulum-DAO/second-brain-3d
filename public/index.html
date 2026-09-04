@@ -333,6 +333,7 @@
 <body>
 <div id="brain-graph"></div>
 <div id="pulse-labels"></div>
+<svg id="convotether" style="position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:13;display:none"><line stroke="rgba(237,228,211,.75)" stroke-width="1"/></svg>
 <div id="convocard"><div class="cc-dot"></div><div class="cc-hdr"><span class="cc-name"></span><span class="cc-max" title="maximize">&#x2922;</span><span class="cc-close" title="close">&times;</span></div><div class="cc-body"></div></div>
 <div id="convooverlay"><div class="co-hdr"><div class="co-dot"></div><span class="co-name"></span><span class="co-src"></span><span class="co-min" title="minimize">&#x2923;</span><span class="co-close" title="close">&times;</span></div><div class="co-body"></div></div>
 
@@ -1623,11 +1624,12 @@ function init(data){
   const ccName=ccEl.querySelector('.cc-name')
   const ccBody=ccEl.querySelector('.cc-body')
   const ccDot=ccEl.querySelector('.cc-dot')
+  const tetherEl=document.getElementById('convotether')
   ccEl.querySelector('.cc-close').onclick=()=>closeConvoCard()
   let convoCard={el:ccEl,agentId:null,name:null,timer:null,lastKey:null,userScrolled:false}
 
   function closeConvoCard(){
-    convoCard.el.classList.remove('on')
+    convoCard.el.classList.remove('on'); tetherEl.style.display='none'
     if(convoCard.timer){clearInterval(convoCard.timer);convoCard.timer=null}
     convoCard.agentId=null; convoCard.name=null; convoCard.lastKey=null; convoCard.userScrolled=false
   }
@@ -1703,9 +1705,9 @@ function init(data){
   function positionConvoCard(){
     if(!convoCard.agentId||!convoCard.el.classList.contains('on')) return;
     const n=byId.get(convoCard.agentId)
-    if(!n||!n.__obj||!n.__obj.visible){ convoCard.el.style.visibility='hidden'; return }
+    if(!n||!n.__obj||!n.__obj.visible){ convoCard.el.style.visibility='hidden'; tetherEl.style.display='none'; return }
     const v=new THREE.Vector3(n.x,n.y,n.z).project(Graph.camera())
-    if(v.z>=1){ convoCard.el.style.visibility='hidden'; return }
+    if(v.z>=1){ convoCard.el.style.visibility='hidden'; tetherEl.style.display='none'; return }
     convoCard.el.style.visibility='visible'
     const rect=el.getBoundingClientRect()
     const sx=(v.x*0.5+0.5)*rect.width+rect.left
@@ -1721,6 +1723,16 @@ function init(data){
     if(cy+ch>window.innerHeight-8) cy=window.innerHeight-ch-8
     convoCard.el.style.transform=`translate(${Math.round(cx)}px,${Math.round(cy)}px)`
     convoCard.el.style.left='0'; convoCard.el.style.top='0'
+    // tether line: orb -> nearest snap point on the card (4 corners + 4 edge midpoints)
+    const chNow=convoCard.el.offsetHeight||ch
+    const snaps=[[cx,cy],[cx+cw,cy],[cx,cy+chNow],[cx+cw,cy+chNow],           // corners
+                 [cx+cw*0.5,cy],[cx+cw*0.5,cy+chNow],[cx,cy+chNow*0.5],[cx+cw,cy+chNow*0.5]] // edge midpoints
+    let bp=snaps[0],bd=Infinity
+    for(const p of snaps){ const d=(p[0]-sx)**2+(p[1]-sy)**2; if(d<bd){bd=d;bp=p} }
+    const L=tetherEl.firstElementChild
+    L.setAttribute('x1',Math.round(sx)); L.setAttribute('y1',Math.round(sy))
+    L.setAttribute('x2',Math.round(bp[0])); L.setAttribute('y2',Math.round(bp[1]))
+    tetherEl.style.display='block'
   }
   convoTick=positionConvoCard
 
@@ -1785,7 +1797,7 @@ function init(data){
     const savedName=convoCard.name
     // pause card poll; clear agentId so openConvoCard won't bail on re-open later
     if(convoCard.timer){clearInterval(convoCard.timer);convoCard.timer=null}
-    convoCard.el.classList.remove('on')
+    convoCard.el.classList.remove('on'); tetherEl.style.display='none'
     convoCard.agentId=null
 
     convoOverlay.agentId=savedAgentId
