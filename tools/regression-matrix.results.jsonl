@@ -15,3 +15,4 @@
 {"surface":"brain","trigger":"focus","pass":true,"notes":"focused agent:Audience-Builder-Audit · census 1049 pos / 0 at origin","ts":"2026-09-05T20:13:06.543Z"}
 {"surface":"brain","trigger":"grow","pass":true,"notes":"unborn=1045 hours=6 restored · census 1049 pos / 0 at origin","ts":"2026-09-05T20:13:23.227Z"}
 {"surface":"brain","trigger":"scrubber","pass":true,"notes":"24h: 259 events · census 1049 pos / 0 at origin","ts":"2026-09-05T20:13:41.570Z"}
+{"surface":"brain","trigger":"tap-picker","pass":true,"notes":"aimed agent:Audience-Builder-Audit → focused agent:multipart-canary-claude-5 +card · census 1049 pos / 0 at origin","ts":"2026-09-05T20:13:57.617Z"}
