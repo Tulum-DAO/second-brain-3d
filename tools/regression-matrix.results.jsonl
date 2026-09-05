@@ -5,3 +5,4 @@
 {"surface":"field","trigger":"focus","pass":true,"notes":"focused agent:Audience-Builder-Audit · census 1061 pos / 0 at origin","ts":"2026-09-05T20:09:44.207Z"}
 {"surface":"field","trigger":"play","pass":true,"notes":"cursor +174715ms, idx +0 · census 1061 pos / 0 at origin","ts":"2026-09-05T20:10:21.304Z"}
 {"surface":"field","trigger":"grow","pass":true,"notes":"unborn=1057 hours=6 restored · census 1061 pos / 0 at origin","ts":"2026-09-05T20:10:42.711Z"}
+{"surface":"field","trigger":"scrubber","pass":true,"notes":"24h: 259 events · census 1061 pos / 0 at origin","ts":"2026-09-05T20:10:57.905Z"}
