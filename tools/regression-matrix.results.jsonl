@@ -10,3 +10,4 @@
 {"surface":"field","trigger":"tap-picker","pass":true,"notes":"aimed agent:Audience-Builder-Audit → focused agent:Audience-Builder-Audit +card · census 1061 pos / 0 at origin","ts":"2026-09-05T20:11:40.010Z"}
 {"surface":"brain","trigger":"seek","pass":true,"notes":"time=\"Sep 5, 03:56 PM\" · census 1049 pos / 0 at origin","ts":"2026-09-05T20:12:01.553Z"}
 {"surface":"brain","trigger":"play","pass":true,"notes":"cursor +177354ms, idx +0 · census 1049 pos / 0 at origin","ts":"2026-09-05T20:12:19.325Z"}
+{"surface":"brain","trigger":"live","pass":true,"notes":"returned to live · census 1049 pos / 0 at origin","ts":"2026-09-05T20:12:34.150Z"}
