@@ -24,3 +24,4 @@
 {"surface":"console","trigger":"grow","pass":true,"notes":"unborn=1045 hours=6 restored · census 1049 pos / 0 at origin","ts":"2026-09-05T20:15:37.357Z"}
 {"surface":"console","trigger":"scrubber","pass":true,"notes":"24h: 261 events · census 1049 pos / 0 at origin","ts":"2026-09-05T20:15:54.342Z"}
 {"surface":"console","trigger":"tap-picker","pass":false,"notes":"tap did not select (aimed agent:Audience-Builder-Audit): {\"focus\":null,\"card\":false}","ts":"2026-09-05T20:16:09.162Z"}
+{"surface":"console","trigger":"tap-picker","pass":true,"notes":"aimed agent:arkdata-dev → focused agent:arkdata-dev +card · census 1049 pos / 0 at origin","ts":"2026-09-05T20:16:38.908Z"}

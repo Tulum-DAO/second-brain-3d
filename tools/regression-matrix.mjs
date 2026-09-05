@@ -131,7 +131,11 @@ try {
       for (const n of B.DATA.nodes) { if (n.kind !== 'agent' || !n.__obj || !n.__obj.visible) continue;
         const e = mul(MV, n.x, n.y, n.z, 1), c = mul(P, ...e); if (c[3] <= 0) continue;
         const nx = c[0]/c[3], ny = c[1]/c[3]; if (Math.abs(nx) > 0.8 || Math.abs(ny) > 0.8) continue;
-        return { x: (nx*0.5+0.5)*rect.width+rect.left, y: (-ny*0.5+0.5)*rect.height+rect.top, id: n.id }; }
+        const sx = (nx*0.5+0.5)*rect.width+rect.left, sy = (-ny*0.5+0.5)*rect.height+rect.top;
+        // skip orbs hidden behind UI overlays (console feed, panels) — a finger couldn't tap those either
+        const hit = document.elementFromPoint(sx, sy);
+        if (!hit || hit.tagName !== 'CANVAS') continue;
+        return { x: sx, y: sy, id: n.id }; }
       return null;
     });
     if (!pt) return verdict(false, 'no projectable agent found');
