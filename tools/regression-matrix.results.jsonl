@@ -6,3 +6,4 @@
 {"surface":"field","trigger":"play","pass":true,"notes":"cursor +174715ms, idx +0 · census 1061 pos / 0 at origin","ts":"2026-09-05T20:10:21.304Z"}
 {"surface":"field","trigger":"grow","pass":true,"notes":"unborn=1057 hours=6 restored · census 1061 pos / 0 at origin","ts":"2026-09-05T20:10:42.711Z"}
 {"surface":"field","trigger":"scrubber","pass":true,"notes":"24h: 259 events · census 1061 pos / 0 at origin","ts":"2026-09-05T20:10:57.905Z"}
+{"surface":"field","trigger":"tap-picker","pass":false,"notes":"tap did not select (aimed agent:Audience-Builder-Audit): {\"focus\":null,\"card\":false}","ts":"2026-09-05T20:11:11.545Z"}
