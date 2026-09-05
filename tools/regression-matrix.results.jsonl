@@ -18,3 +18,4 @@
 {"surface":"brain","trigger":"tap-picker","pass":true,"notes":"aimed agent:Audience-Builder-Audit → focused agent:multipart-canary-claude-5 +card · census 1049 pos / 0 at origin","ts":"2026-09-05T20:13:57.617Z"}
 {"surface":"console","trigger":"seek","pass":true,"notes":"time=\"Sep 5, 03:58 PM\" · census 1049 pos / 0 at origin","ts":"2026-09-05T20:14:21.061Z"}
 {"surface":"console","trigger":"play","pass":true,"notes":"cursor +152314ms, idx +0 · census 1049 pos / 0 at origin","ts":"2026-09-05T20:14:36.665Z"}
+{"surface":"console","trigger":"live","pass":true,"notes":"returned to live · census 1049 pos / 0 at origin","ts":"2026-09-05T20:14:50.896Z"}
