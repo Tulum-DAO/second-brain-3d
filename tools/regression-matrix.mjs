@@ -53,12 +53,16 @@ try {
       document.getElementById('scr-range').value = 100;
       document.getElementById('scr-range').dispatchEvent(new Event('input'));
       await new Promise(q => setTimeout(q, 400));
-      const i0 = B.scr.idx; tog.click(); await new Promise(q => setTimeout(q, 2500));
-      const playing = B.scr.playing, advanced = B.scr.idx > i0; tog.click();
-      return { playing, advanced, i0, i1: B.scr.idx };
+      tog.click(); await new Promise(q => setTimeout(q, 400));
+      const cur0 = B.scr.cursor, i0 = B.scr.idx;
+      await new Promise(q => setTimeout(q, 2200));
+      // the ASI-bug failure mode was a FROZEN cursor while the button showed playing —
+      // assert the clock advances (idx only moves when events are crossed; traffic is bursty)
+      const playing = B.scr.playing, moved = B.scr.cursor > cur0; tog.click();
+      return { playing, moved, dCursorMs: Math.round(B.scr.cursor - cur0), dIdx: B.scr.idx - i0 };
     });
-    if (!r.playing || !r.advanced) return verdict(false, `play did not advance: ${JSON.stringify(r)}`);
-    notes = `idx ${r.i0}→${r.i1}`;
+    if (!r.playing || !r.moved) return verdict(false, `play frozen: ${JSON.stringify(r)}`);
+    notes = `cursor +${r.dCursorMs}ms, idx +${r.dIdx}`;
   } else if (trigger === 'live') {
     const r = await p.evaluate(async () => {
       document.getElementById('scr-range').value = 200;
