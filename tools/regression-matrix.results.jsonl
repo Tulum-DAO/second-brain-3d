@@ -1,1 +1,2 @@
 {"surface":"field","trigger":"seek","pass":true,"notes":"time=\"Sep 5, 03:53 PM\" · census 1061 pos / 0 at origin","ts":"2026-09-05T20:08:37.531Z"}
+{"surface":"field","trigger":"play","pass":false,"notes":"play did not advance: {\"playing\":true,\"advanced\":false,\"i0\":5,\"i1\":5}","ts":"2026-09-05T20:08:58.998Z"}
