@@ -25,7 +25,8 @@ const verdict = (pass, notes) => {
 try {
   await p.goto(`http://127.0.0.1:7373${URLS[surface]}`, { waitUntil: 'domcontentloaded', timeout: 30000 });
   await p.waitForFunction(() => window.__brain && window.__brain.DATA.nodes.length > 0, { timeout: 30000 });
-  await new Promise(r => setTimeout(r, 6000));   // settle: pin/layout/loader
+  await p.waitForFunction(() => { const l = document.getElementById('loader'); return !l || l.classList.contains('gone'); }, { timeout: 30000 });
+  await new Promise(r => setTimeout(r, 3000));   // settle: pin/layout
   await p.evaluate(() => { window.__controls && (window.__controls.autoRotate = false); });
 
   const census = () => p.evaluate(() => {
