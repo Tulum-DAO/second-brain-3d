@@ -22,3 +22,4 @@
 {"surface":"console","trigger":"isolate","pass":true,"notes":"prefrontal: 970 dimmed · census 1049 pos / 0 at origin","ts":"2026-09-05T20:15:04.902Z"}
 {"surface":"console","trigger":"focus","pass":true,"notes":"focused agent:Audience-Builder-Audit · census 1049 pos / 0 at origin","ts":"2026-09-05T20:15:21.116Z"}
 {"surface":"console","trigger":"grow","pass":true,"notes":"unborn=1045 hours=6 restored · census 1049 pos / 0 at origin","ts":"2026-09-05T20:15:37.357Z"}
+{"surface":"console","trigger":"scrubber","pass":true,"notes":"24h: 261 events · census 1049 pos / 0 at origin","ts":"2026-09-05T20:15:54.342Z"}
