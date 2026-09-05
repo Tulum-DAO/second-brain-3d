@@ -11,3 +11,4 @@
 {"surface":"brain","trigger":"seek","pass":true,"notes":"time=\"Sep 5, 03:56 PM\" · census 1049 pos / 0 at origin","ts":"2026-09-05T20:12:01.553Z"}
 {"surface":"brain","trigger":"play","pass":true,"notes":"cursor +177354ms, idx +0 · census 1049 pos / 0 at origin","ts":"2026-09-05T20:12:19.325Z"}
 {"surface":"brain","trigger":"live","pass":true,"notes":"returned to live · census 1049 pos / 0 at origin","ts":"2026-09-05T20:12:34.150Z"}
+{"surface":"brain","trigger":"isolate","pass":true,"notes":"prefrontal: 970 dimmed · census 1049 pos / 0 at origin","ts":"2026-09-05T20:12:50.139Z"}
