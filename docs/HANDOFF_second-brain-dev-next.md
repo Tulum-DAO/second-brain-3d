@@ -1,5 +1,5 @@
 # HANDOFF — second-brain-dev gen4 → successor (gen-5)
-schema: handoff_schema.Handoff · authored at soft-handoff by gen-4 · 2026-09-06
+schema: handoff_schema.Handoff · authored at soft-handoff by gen-4 · 2026-09-06 · FRESHNESS AMENDMENT 02:20Z: g5 (tmux second-brain-dev-g5, spawned 01:17 ET) OWNS AgentEvent stage 3+ — its uncommitted WIP (test_snapshot_barrier.py 8 tests + test_w5_multipart_gate.py) was gen4-reviewed FAITHFUL + RED-verified; do NOT re-author. Gen4 stood down from the build lane; seat duty (brain viz) is what transfers at rotation. See BUILD-CHECKPOINT.md @7404e7f14 + msg_81ec2db1 for the coordination record.
 gen-4 transcript: `~/.claude/projects/-home-shaw-repos-second-brain/16b937e8-e4f6-4feb-9db4-ffeb7948f153.jsonl`
 
 ## current_goal
@@ -64,7 +64,7 @@ TWO lanes, both live. (1) SEAT: the brain viz (port 7373, tmux `second-brain-svc
   },
   "next_3_actions": [
     {
-      "action": "Read BUILD-CHECKPOINT.md; author stage-3 RED: test_snapshot_barrier.py (register-before-cut, complete-line watermark, item_identities sidecar, inflight committed-only) + W5 multipart-gate RED test; commit-per-fixture",
+      "action": "AMENDED: stage-3 RED already EXISTS as your own pre-rotation WIP (uncommitted test_snapshot_barrier.py + test_w5_multipart_gate.py, gen4-reviewed faithful) — COMMIT it per-fixture, request gm faithfulness eyeball, then GREEN stage 1. Do not re-author.",
       "first_effect": { "kind": "test-run", "target": "~/scripts/agent-orchestra/contract/agentevent/tests/", "check": "python3 -m pytest contract/agentevent/tests/ -q → all suites RED on ModuleNotFoundError, zero passes" }
     },
     { "action": "GREEN stage 1: contract/agentevent/projection.py until the FROZEN stage-1 suite passes untouched; frozen-test changes only via gm re-gate; then request stage-1 merge gate" },
