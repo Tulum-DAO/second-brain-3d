@@ -11,6 +11,7 @@ import { buildGraph, liveSessions, resolveActorId, normActor, hubSeed, db, AO, R
 import { startStatusPoller, getStatusMap } from './lib/status.js';
 import { agentConvo } from './lib/convo.js';
 import { sessionFor, gwJson, gwUpload, readJsonBody } from './lib/chat.js';
+import { startVoicePoller } from './lib/voice.js';
 import { brainPosFor, brainAsset, REGION_LEGEND } from './lib/layout-brain.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -504,6 +505,18 @@ server.listen(PORT, '127.0.0.1', () => {
 
 // firing brain: poll agent work-states, push deltas to clients
 startStatusPoller({ onDelta: (changes) => broadcast({ type: 'agent.status', changes }) });
+
+// Arturo voice requests -> live arrows: shaw(voice) -> target agent, tagged with the
+// source surface (sidecar device -> active-surface -> origin; phone-vs-watch stamping
+// is a filed fleet gap — until it lands we show ios/web/unknown, never a guess).
+startVoicePoller({ onRequest: (r) => {
+  const to = ensureActorNode(r.target);
+  if (to) { pulse(SHAW_NODE(), to, r.kind); flash(to, 'voice'); }
+  broadcast({ type: 'ticker', text: `\u{1F399} shaw (${r.device}) \u2192 ${r.target} \u00b7 ${r.tool}${r.summary && r.tool === 'inject_message' ? ': ' + r.summary.slice(0, 40) : ''}` });
+  broadcast({ type: 'feed.item', item: { cat: 'voice', id: 'v' + r.call + ':' + r.ts, t: r.ts,
+    type: r.kind, status: 'live', from: `shaw (${r.device})`, to: r.target,
+    title: `${r.tool}${r.summary && r.tool === 'inject_message' ? ': ' + r.summary : ''}` } });
+} });
 
 process.on('uncaughtException', (e) => console.error('[brain] uncaught', e));
 process.on('unhandledRejection', (e) => console.error('[brain] unhandled', e));
