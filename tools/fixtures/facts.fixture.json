@@ -1,0 +1,13 @@
+{
+  "fixture": true,
+  "facts": [
+    { "id": "fact_a1", "text": "Shaw is in Tulum, Mexico as home base", "source": "context_layer.top_of_mind", "verified_at": "2026-09-14T10:00:00Z", "freshness": { "age_days": 1, "stale": false, "threshold": 14 } },
+    { "id": "fact_a2", "text": "Blue-green provider-agnostic rotation broad arm complete; 9 conformant T2 seats armed", "source": "context_layer.top_of_mind", "verified_at": "2026-09-15T02:00:00Z", "freshness": { "age_days": 0, "stale": false, "threshold": 7 } },
+    { "id": "fact_b1", "text": "ArkData visitor ID pixel shares the $0-COGS data engine via AudienceLab partnership with Rob", "source": "facts_db", "verified_at": "2026-08-20T00:00:00Z", "freshness": { "age_days": 26, "stale": true, "threshold": 14 } },
+    { "id": "fact_b2", "text": "IntentCore Command Center deployed at listmagic-portal.netlify.app (527 audiences, 93 pixels, 33 tenants)", "source": "facts_db", "verified_at": "2026-04-02T00:00:00Z", "freshness": { "age_days": 166, "stale": true, "threshold": 30 } },
+    { "id": "fact_b3", "text": "Adam (AudienceLab ownership) green-lit payload injection experimentation", "source": "facts_db", "verified_at": "2026-03-06T00:00:00Z", "freshness": { "age_days": 193, "stale": true, "threshold": 60 } },
+    { "id": "fact_c1", "text": "Active clients: Amansala, DentalCancun, Elysian Leaders, Yura", "source": "facts_db", "verified_at": "2026-09-01T00:00:00Z", "freshness": { "age_days": 14, "stale": false, "threshold": 30 } },
+    { "id": "fact_c2", "text": "Elysian Voice pipeline: 4/5 speakers PVC-ready, Adrianna needs more audio", "source": "facts_db", "verified_at": "2026-02-15T00:00:00Z", "freshness": { "age_days": 212, "stale": true, "threshold": 45 } },
+    { "id": "fact_d1", "text": "Next program: Identity Layer v1 — identity_reconciler closes the ctx-freshness/sid gap", "source": "context_layer.session", "verified_at": "2026-09-15T04:00:00Z", "freshness": { "age_days": 0, "stale": false, "threshold": 7 } }
+  ]
+}

@@ -253,10 +253,45 @@ const server = http.createServer((req, res) => {
     res.end(JSON.stringify({ a, b, count: msgs.length, messages: msgs }));
     return;
   }
+  // ---- B6 facts mode: proxy the dashboard facts API (the browser can't reach :8888 itself).
+  // Fail LOUD with an honest 502 — the facts client refuses to render an empty graph silently (W1).
+  if (url === '/api/facts') {
+    const q = new URLSearchParams(req.url.split('?')[1] || '');
+    const json = (code, obj) => { res.writeHead(code, { 'content-type': 'application/json' }); res.end(JSON.stringify(obj)); };
+    if (q.get('fixture') === '1' || process.env.FACTS_FIXTURE === '1') {
+      fs.readFile(path.join(__dirname, 'tools', 'fixtures', 'facts.fixture.json'), (err, data) => {
+        if (err) { json(502, { error: 'facts API not reachable', detail: 'fixture requested but tools/fixtures/facts.fixture.json unreadable: ' + err.message }); return; }
+        res.writeHead(200, { 'content-type': 'application/json' }); res.end(data);
+      });
+      return;
+    }
+    const preq = http.get({ host: '127.0.0.1', port: 8888, path: '/api/facts', timeout: 4000 }, (pres) => {
+      const body = [];
+      pres.on('data', c => body.push(c));
+      pres.on('end', () => {
+        if (pres.statusCode === 200) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(Buffer.concat(body)); }
+        else json(502, { error: 'facts API not reachable', detail: `upstream :8888/api/facts → HTTP ${pres.statusCode}` });
+      });
+    });
+    preq.on('timeout', () => preq.destroy(new Error('timeout after 4s')));
+    preq.on('error', (e) => { try { json(502, { error: 'facts API not reachable', detail: `upstream :8888/api/facts → ${e.message}` }); } catch {} });
+    return;
+  }
   if (url === '/healthz') { res.writeHead(200); res.end('ok'); return; }
   // Shape routes all serve the one page; the client picks its layout from the path.
   // Add a new shape here (+ ROUTE_LAYOUT in index.html) to give it its own URL. `/` → default.
   const SHAPE_ROUTES = new Set(['/field', '/brain', '/console']);
+  // B6: ?source=facts swaps in the facts-mode client (public/facts.html). Checked BEFORE the
+  // '/' redirect (which drops the query). No source param (or any other value) → byte-identical default.
+  if ((url === '/' || SHAPE_ROUTES.has(url)) &&
+      new URLSearchParams(req.url.split('?')[1] || '').get('source') === 'facts') {
+    fs.readFile(path.join(PUBLIC, 'facts.html'), (err, data) => {
+      if (err) { res.writeHead(500); res.end('facts client missing'); return; }
+      res.writeHead(200, { 'content-type': 'text/html', 'cache-control': 'no-store, must-revalidate' });
+      res.end(data);
+    });
+    return;
+  }
   if (url === '/') { res.writeHead(302, { location: '/field' }); res.end(); return; }
   let file = SHAPE_ROUTES.has(url) ? '/index.html' : url;
   const fp = path.join(PUBLIC, path.normalize(file).replace(/^(\.\.[/\\])+/, ''));

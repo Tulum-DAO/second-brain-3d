@@ -1,0 +1,196 @@
+<!doctype html>
+<!-- facts.html — Second Brain "facts" data-source mode (Agent Page v1 / B6).
+     Served when ?source=facts is present; the default fleet-topology client (index.html)
+     is untouched. Nodes = personal facts (GET /api/facts, proxied to the :8888 dashboard
+     api), edges = shared source / shared topic, color = freshness, size = recency.
+     Fails LOUD when the facts API is unreachable — never a silent empty graph (W1). -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Second Brain — Facts</title>
+<script type="importmap">
+{"imports":{"three":"https://esm.sh/three@0.183.2","three/":"https://esm.sh/three@0.183.2/"}}
+</script>
+<style>
+  :root { color-scheme: dark; }
+  html, body { margin:0; height:100%; background:#07090d; color:#cfd8e3;
+    font:14px/1.45 -apple-system, "SF Pro Text", Inter, system-ui, sans-serif;
+    overflow:hidden; -webkit-tap-highlight-color:transparent; }
+  #graph { position:absolute; inset:0; touch-action:none; }
+  #topbar { position:absolute; top:0; left:0; right:0; padding:10px 14px; z-index:5;
+    display:flex; align-items:baseline; gap:10px; pointer-events:none;
+    background:linear-gradient(#07090dcc, transparent); }
+  #topbar h1 { margin:0; font-size:15px; letter-spacing:.14em; color:#e7edf5; font-weight:600; }
+  #topbar .sub { font-size:11px; color:#6b7686; letter-spacing:.06em; }
+  .badge { display:inline-block; padding:2px 8px; border-radius:9px; font-size:10px;
+    letter-spacing:.08em; font-weight:600; }
+  #fixtureBadge { position:absolute; top:10px; right:12px; z-index:6;
+    background:#7c3aed33; color:#c4b5fd; border:1px solid #7c3aed88; display:none; }
+  /* LOUD failure state — full screen, unmistakable, never a silent empty graph */
+  #dead { position:absolute; inset:0; z-index:20; display:none; align-items:center;
+    justify-content:center; background:#0b0508f2; }
+  #dead .card { max-width:440px; margin:20px; padding:26px 28px; border-radius:14px;
+    background:#1a0d12; border:1px solid #ef444488; box-shadow:0 0 60px #ef444422; }
+  #dead h2 { margin:0 0 8px; color:#f87171; font-size:17px; letter-spacing:.04em; }
+  #dead p { margin:0 0 6px; color:#d8b4b4; font-size:13px; }
+  #dead code { color:#fca5a5; font-size:12px; word-break:break-all; }
+  #dead button { margin-top:14px; padding:9px 22px; border-radius:9px; border:1px solid #ef4444aa;
+    background:#ef444422; color:#fecaca; font-size:13px; letter-spacing:.06em; cursor:pointer; }
+  #dead button:active { background:#ef444444; }
+  /* in-iframe detail card (host also gets brain:select via postMessage) */
+  #detail { position:absolute; left:12px; right:12px; bottom:12px; z-index:8; display:none;
+    padding:14px 16px; border-radius:12px; background:#0d1218ee; border:1px solid #2a3442;
+    backdrop-filter:blur(6px); max-height:38%; overflow:auto; }
+  #detail .text { color:#e7edf5; font-size:14px; margin-bottom:8px; }
+  #detail .row { font-size:11px; color:#8593a5; letter-spacing:.04em; margin-top:3px; }
+  #detail .close { position:absolute; top:8px; right:12px; color:#6b7686; cursor:pointer;
+    font-size:16px; padding:4px; }
+  #legend { position:absolute; left:12px; bottom:12px; z-index:4; font-size:10px;
+    color:#6b7686; letter-spacing:.06em; user-select:none; }
+  #legend .dot { display:inline-block; width:8px; height:8px; border-radius:50%;
+    margin:0 4px 0 10px; vertical-align:middle; }
+  body.embed #topbar, body.embed #legend { display:none; }
+</style>
+</head>
+<body>
+<div id="graph"></div>
+<div id="topbar"><h1>SECOND BRAIN</h1><span class="sub">facts mode · color = freshness · size = recency</span></div>
+<span id="fixtureBadge" class="badge">FIXTURE DATA</span>
+<div id="legend"><span class="dot" style="background:#34d399"></span>fresh<span class="dot" style="background:#f59e0b"></span>stale<span class="dot" style="background:#ef4444"></span>very stale</div>
+<div id="dead"><div class="card">
+  <h2>⚠ facts API not reachable</h2>
+  <p>The facts graph has no data source right now — this is a real outage, not an empty brain.</p>
+  <p><code id="deadDetail"></code></p>
+  <button id="retry">RETRY</button>
+</div></div>
+<div id="detail"><span class="close" id="detailClose">✕</span>
+  <div class="text" id="detailText"></div>
+  <div class="row" id="detailSource"></div>
+  <div class="row" id="detailFresh"></div>
+</div>
+
+<script type="module">
+import ForceGraph3D from 'https://esm.sh/3d-force-graph@1.73.4?external=three';
+
+const params = new URLSearchParams(location.search);
+const EMBED = params.get('embed') === '1';
+if (EMBED) document.body.classList.add('embed');
+
+const $ = id => document.getElementById(id);
+const post = (type, payload) => { try { window.parent.postMessage({ type, payload }, '*'); } catch {} };
+
+// ---- freshness → color, recency → size ----
+function factColor(f) {
+  const fr = f.freshness || {};
+  if (!fr.stale) return '#34d399';                       // fresh — mint
+  const over = Math.min(((fr.age_days || 0) / Math.max(fr.threshold || 1, 1)) - 1, 2) / 2; // 0..1 past threshold, cap 3x
+  const a = [0xf5, 0x9e, 0x0b], b = [0xef, 0x44, 0x44];  // amber → red
+  const c = a.map((v, i) => Math.round(v + (b[i] - v) * Math.max(over, 0)));
+  return `rgb(${c[0]},${c[1]},${c[2]})`;
+}
+const factVal = f => 3 + 9 * Math.exp(-((f.freshness?.age_days ?? 90)) / 45); // newer = bigger
+
+// ---- topic tokens for shared-topic edges ----
+const STOP = new Set(('the a an and or of for with via from into over under to in on at is are was were be been has have had that this its our their shaw not now new per all').split(' '));
+const tokens = t => new Set(String(t || '').toLowerCase().replace(/[^a-z0-9\s-]/g, ' ').split(/[\s-]+/)
+  .filter(w => w.length > 3 && !STOP.has(w)));
+
+function buildFactGraph(facts) {
+  const nodes = facts.map(f => ({
+    id: f.id, fact: f, name: f.text, val: factVal(f), color: factColor(f),
+    toks: tokens(f.text),
+  }));
+  const links = [];
+  for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) {
+    const A = nodes[i], B = nodes[j];
+    if (A.fact.source && A.fact.source === B.fact.source)
+      links.push({ source: A.id, target: B.id, kind: 'source' });
+    else {
+      let shared = 0;
+      for (const t of A.toks) if (B.toks.has(t)) shared++;
+      if (shared >= 2) links.push({ source: A.id, target: B.id, kind: 'topic', shared });
+    }
+  }
+  return { nodes, links };
+}
+
+// ---- graph ----
+const G = ForceGraph3D()($('graph'))
+  .backgroundColor('#07090d')
+  .showNavInfo(false)
+  .nodeVal('val')
+  .nodeColor('color')
+  .nodeLabel(n => { const d = document.createElement('div'); d.style.cssText = 'max-width:260px;font-size:12px'; d.textContent = n.fact.text; return d.outerHTML; })
+  .nodeOpacity(0.95)
+  .linkColor(l => l.kind === 'source' ? '#5b8db8' : '#3a4556')
+  .linkOpacity(0.35)
+  .linkWidth(l => l.kind === 'source' ? 1.2 : 0.5)
+  .enableNodeDrag(false)
+  .onNodeHover(n => { document.body.style.cursor = n ? 'pointer' : ''; if (n) post('brain:hover', { id: n.id, name: n.fact.text, cluster: 'facts' }); })
+  .onNodeClick(n => selectFact(n));
+
+// touch rotate is OrbitControls default; autorotate only standalone (never in embed)
+const controls = G.controls();
+controls.autoRotate = !EMBED;
+controls.autoRotateSpeed = 0.4;
+
+function selectFact(n) {
+  if (!n) return;
+  const f = n.fact, fr = f.freshness || {};
+  const status = fr.stale ? `stale(${fr.age_days}d)` : 'fresh';
+  // the existing detail-panel postMessage, carrying the fact payload for BrainModal show/edit
+  post('brain:select', { id: f.id, name: f.text, cluster: 'facts', status, meta: f });
+  $('detailText').textContent = f.text;
+  $('detailSource').textContent = `source: ${f.source || 'unknown'} · verified ${f.verified_at || '?'}`;
+  const df = $('detailFresh'); df.textContent = '';
+  df.append('freshness: ');
+  const b = document.createElement('b'); b.style.color = factColor(f); b.textContent = status; df.append(b);
+  df.append(` (threshold ${fr.threshold ?? '?'}d)`);
+  $('detail').style.display = 'block';
+  G.cameraPosition({ x: n.x * 1.6, y: n.y * 1.6, z: n.z * 1.6 + 60 }, n, 700);
+}
+$('detailClose').onclick = () => { $('detail').style.display = 'none'; };
+
+// ---- host → brain (subset of the embed seam contract that makes sense for facts) ----
+window.addEventListener('message', e => {
+  const { type, payload } = e.data || {};
+  if (type === 'brain:focus' && payload?.id) {
+    const n = G.graphData().nodes.find(n => n.id === payload.id); if (n) selectFact(n);
+  } else if (type === 'brain:search' && payload?.q) {
+    const q = String(payload.q).toLowerCase();
+    const n = G.graphData().nodes.find(n => n.fact.text.toLowerCase().includes(q));
+    if (n) selectFact(n);
+  } else if (type === 'brain:reset') {
+    $('detail').style.display = 'none'; G.zoomToFit(700, 60);
+  }
+});
+
+// ---- data load: fail LOUD, never silent-empty ----
+function dead(detail) {
+  $('deadDetail').textContent = detail;
+  $('dead').style.display = 'flex';
+  post('brain:error', { mode: 'facts', error: 'facts API not reachable', detail });
+}
+async function load() {
+  $('dead').style.display = 'none';
+  let payload;
+  try {
+    const r = await fetch('/api/facts' + (params.get('fixture') === '1' ? '?fixture=1' : ''), { cache: 'no-store' });
+    if (!r.ok) { dead(`GET /api/facts → HTTP ${r.status}: ${(await r.text()).slice(0, 200)}`); return; }
+    payload = await r.json();
+  } catch (e) { dead(`GET /api/facts failed: ${e.message}`); return; }
+  const facts = Array.isArray(payload) ? payload : payload.facts;
+  if (!Array.isArray(facts)) { dead('facts API returned an unrecognized shape'); return; }
+  if (payload.fixture) $('fixtureBadge').style.display = 'inline-block';
+  if (!facts.length) { dead('facts API reachable but returned ZERO facts — refusing to render an empty brain silently'); return; }
+  G.graphData(buildFactGraph(facts));
+  setTimeout(() => G.zoomToFit(800, 70), 900);
+  post('brain:ready', { mode: 'facts', count: facts.length });
+}
+$('retry').onclick = load;
+load();
+window.addEventListener('resize', () => G.width(innerWidth).height(innerHeight));
+</script>
+</body>
+</html>
